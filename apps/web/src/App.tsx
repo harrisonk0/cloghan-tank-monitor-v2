@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -522,18 +522,29 @@ function ReadingsPage({ readings, onAdd, onEdit, onDelete }: { readings: Reading
         <table>
           <thead>
             <tr>
-              <th>Time</th>
-              <th>C1 lvl</th><th>C1 &deg;C</th><th>C1 TOV</th><th>C1 GSV</th>
-              <th>C2 lvl</th><th>C2 &deg;C</th><th>C2 TOV</th><th>C2 GSV</th>
-              <th>C3 lvl</th><th>C3 &deg;C</th><th>C3 TOV</th><th>C3 GSV</th>
-              <th>C4 lvl</th><th>C4 &deg;C</th><th>C4 TOV</th><th>C4 GSV</th>
-              <th>Total</th><th>&Delta;</th><th>GSV</th><th>&Delta; GSV</th>
-              <th>Source</th><th>Conf.</th><th>OK</th><th></th>
+              <th className="sticky-col" rowSpan={2}>Time</th>
+              {TANKS.map((t) => <th key={t} className="tank-group" colSpan={4}>{t}</th>)}
+              <th className="total-group" colSpan={2}>Totals</th>
+              <th rowSpan={2}>Src</th>
+              <th rowSpan={2}>Conf</th>
+              <th rowSpan={2}></th>
+            </tr>
+            <tr>
+              {TANKS.map((t) => (
+                <Fragment key={`${t}-sub`}>
+                  <th>mm</th>
+                  <th>&deg;C</th>
+                  <th>TOV</th>
+                  <th>GSV</th>
+                </Fragment>
+              ))}
+              <th>Level</th>
+              <th>GSV</th>
             </tr>
           </thead>
           <tbody>
             {readings.map((r) => <ReadingRow key={r.id ?? r.capturedAt} reading={r} onEdit={onEdit} onDelete={onDelete} />)}
-            {!readings.length && <tr><td colSpan={25} style={{ textAlign: "center", color: "var(--text-dim)" }}>No readings found.</td></tr>}
+            {!readings.length && <tr><td colSpan={22} style={{ textAlign: "center", color: "var(--text-dim)" }}>No readings yet.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -545,7 +556,7 @@ function ReadingRow({ reading, onEdit, onDelete }: { reading: Reading; onEdit: (
   const byTank = Object.fromEntries(reading.tanks.map((t) => [t.tank, t]));
   return (
     <tr>
-      <td style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem" }}>{formatDate(reading.capturedAt)}</td>
+      <td className="sticky-col">{formatDate(reading.capturedAt)}</td>
       {TANKS.flatMap((tank) => {
         const item = byTank[tank] as TankReading | undefined;
         return [
@@ -555,13 +566,10 @@ function ReadingRow({ reading, onEdit, onDelete }: { reading: Reading; onEdit: (
           <td key={`${tank}-g`}>{formatNumber(item?.gsvM3)}</td>,
         ];
       })}
-      <td style={{ fontWeight: 600 }}>{formatNumber(reading.totalLevelMm)}</td>
-      <td>{formatNumber(reading.totalLevelDiffMm)}</td>
-      <td style={{ fontWeight: 600 }}>{formatNumber(reading.totalGsvM3)}</td>
-      <td>{formatNumber(reading.totalGsvDiffM3)}</td>
+      <td className="total-cell">{formatNumber(reading.totalLevelMm)}</td>
+      <td className="total-cell">{formatNumber(reading.totalGsvM3)}</td>
       <td>{reading.source}</td>
       <td>{formatConfidence(reading.confidence)}</td>
-      <td>{reading.verified ? "\u2713" : "\u2014"}</td>
       <td className="actions">
         <button onClick={() => onEdit(reading)}>Edit</button>
         <button className="danger" onClick={() => onDelete(reading.id)}>Del</button>

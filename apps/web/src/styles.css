@@ -512,7 +512,7 @@ button.danger:hover {
 table {
   border-collapse: collapse;
   font-size: 0.82rem;
-  min-width: 1100px;
+  min-width: 1050px;
   width: 100%;
 }
 
@@ -524,8 +524,8 @@ thead th {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  padding: 0.65rem 0.75rem;
-  text-align: left;
+  padding: 0.55rem 0.6rem;
+  text-align: right;
   white-space: nowrap;
   border-bottom: 1px solid var(--border);
   position: sticky;
@@ -533,20 +533,75 @@ thead th {
   z-index: 1;
 }
 
+thead th:first-child {
+  text-align: left;
+}
+
+thead .tank-group {
+  text-align: center;
+  color: var(--accent-cyan);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  padding: 0.5rem 0.6rem;
+}
+
+thead .total-group {
+  text-align: center;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+thead th.sticky-col {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+
 tbody td {
-  padding: 0.55rem 0.75rem;
+  padding: 0.45rem 0.6rem;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
-tbody tr:hover {
+tbody td:first-child {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  position: sticky;
+  left: 0;
+  background: var(--bg-surface);
+  z-index: 1;
+}
+
+tbody td.sticky-col {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  position: sticky;
+  left: 0;
+  background: var(--bg-surface);
+  z-index: 1;
+}
+
+tbody td.total-cell {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+tbody tr:hover td {
   background: var(--bg-elevated);
 }
 
-tbody td:last-child {
-  white-space: nowrap;
+tbody tr:hover td.sticky-col,
+tbody tr:hover td:first-child {
+  background: var(--bg-elevated);
 }
 
 .actions {

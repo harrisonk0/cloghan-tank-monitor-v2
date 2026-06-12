@@ -7,7 +7,7 @@ import { configureScheduler, getSchedulerStatus } from "./scheduler.js";
 
 const app = Fastify({ logger: true });
 
-await app.register(cors, { origin: true });
+await app.register(cors, { origin: true, methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] });
 
 app.get("/api/health", async () => ({
   status: "ok",
