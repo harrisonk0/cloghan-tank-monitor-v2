@@ -716,6 +716,22 @@ tbody tr:hover {
   margin-top: 0.75rem;
 }
 
+/* Per-tank GSV diff */
+.gsv-diff {
+  font-size: 0.75rem;
+  margin-left: 0.35rem;
+  color: var(--color-green);
+  font-weight: 600;
+}
+
+.gsv-diff.negative {
+  color: var(--color-red);
+}
+
+.diff-negative {
+  color: var(--color-red);
+}
+
 .empty-text {
   color: var(--text-dim);
   text-align: center;

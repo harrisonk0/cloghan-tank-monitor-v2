@@ -378,7 +378,7 @@ function Dashboard({ readings, latest, previous, runs }: { readings: Reading[]; 
   return (
     <div className="page-grid">
       {/* Tank visualisations — the signature element */}
-      <TankVisualisations latest={latest} />
+      <TankVisualisations latest={latest} previous={previous} />
 
       {/* Hero metrics */}
       <section className="panel hero-panel">
@@ -426,7 +426,7 @@ function Dashboard({ readings, latest, previous, runs }: { readings: Reading[]; 
 // Tank Visualisations (signature element)
 // ============================================================
 
-function TankVisualisations({ latest }: { latest: Reading }) {
+function TankVisualisations({ latest, previous }: { latest: Reading; previous?: Reading }) {
   return (
     <section className="tanks-visual">
       <div className="tanks-visual-header">
@@ -436,16 +436,18 @@ function TankVisualisations({ latest }: { latest: Reading }) {
       <div className="tanks-grid">
         {TANKS.map((tank) => {
           const t = latest.tanks.find((item) => item.tank === tank);
-          return <TankViz key={tank} tank={tank} reading={t} />;
+          const prev = previous?.tanks.find((item) => item.tank === tank);
+          return <TankViz key={tank} tank={tank} reading={t} previous={prev} />;
         })}
       </div>
     </section>
   );
 }
 
-function TankViz({ tank, reading }: { tank: TankName; reading?: TankReading }) {
+function TankViz({ tank, reading, previous }: { tank: TankName; reading?: TankReading; previous?: TankReading }) {
   const level = reading?.levelMm;
   const fillPct = level != null ? Math.min((level / MAX_LEVEL) * 100, 100) : 0;
+  const gsvDiff = reading?.gsvM3 != null && previous?.gsvM3 != null ? reading.gsvM3 - previous.gsvM3 : null;
 
   return (
     <div className="tank-viz">
@@ -473,7 +475,10 @@ function TankViz({ tank, reading }: { tank: TankName; reading?: TankReading }) {
         </div>
         <div className="tank-viz-meta-row">
           <span className="tank-viz-meta-label">GSV</span>
-          <span className="tank-viz-meta-value">{reading?.gsvM3 != null ? `${formatNumber(reading.gsvM3)} m\u00B3` : "\u2014"}</span>
+          <span className="tank-viz-meta-value">
+            {reading?.gsvM3 != null ? `${formatNumber(reading.gsvM3)} m\u00B3` : "\u2014"}
+            {gsvDiff != null && <span className={`gsv-diff ${gsvDiff < 0 ? "negative" : ""}`}> {gsvDiff > 0 ? "+" : ""}{formatNumber(gsvDiff)}</span>}
+          </span>
         </div>
       </div>
     </div>
@@ -522,10 +527,11 @@ function ReadingsPage({ readings, onAdd, onEdit, onDelete }: { readings: Reading
       <div className="section-header"><h2>Readings</h2><button className="primary" onClick={onAdd}>Add reading</button></div>
       <div className="readings-list">
         {!readings.length && <p className="empty-text">No readings yet.</p>}
-        {readings.map((r) => (
+        {readings.map((r, i) => (
           <ReadingCard
             key={r.id ?? r.capturedAt}
             reading={r}
+            previous={readings[i + 1]}
             isExpanded={expanded === r.id}
             onToggle={() => setExpanded(expanded === r.id ? null : r.id ?? null)}
             onEdit={onEdit}
@@ -537,8 +543,9 @@ function ReadingsPage({ readings, onAdd, onEdit, onDelete }: { readings: Reading
   );
 }
 
-function ReadingCard({ reading, isExpanded, onToggle, onEdit, onDelete }: { reading: Reading; isExpanded: boolean; onToggle: () => void; onEdit: (r: Reading) => void; onDelete: (id?: number) => void }) {
+function ReadingCard({ reading, previous, isExpanded, onToggle, onEdit, onDelete }: { reading: Reading; previous?: Reading; isExpanded: boolean; onToggle: () => void; onEdit: (r: Reading) => void; onDelete: (id?: number) => void }) {
   const byTank = Object.fromEntries(reading.tanks.map((t) => [t.tank, t]));
+  const prevByTank = previous ? Object.fromEntries(previous.tanks.map((t) => [t.tank, t])) : {};
   return (
     <div className={`reading-card ${isExpanded ? "expanded" : ""}`}>
       <button className="reading-card-header" onClick={onToggle}>
@@ -559,11 +566,14 @@ function ReadingCard({ reading, isExpanded, onToggle, onEdit, onDelete }: { read
                 <th>Temp &deg;C</th>
                 <th>TOV m&sup3;</th>
                 <th>GSV m&sup3;</th>
+                <th>GSV Diff</th>
               </tr>
             </thead>
             <tbody>
               {TANKS.map((tank) => {
                 const t = byTank[tank] as TankReading | undefined;
+                const prev = prevByTank[tank] as TankReading | undefined;
+                const gsvDiff = t?.gsvM3 != null && prev?.gsvM3 != null ? t.gsvM3 - prev.gsvM3 : null;
                 return (
                   <tr key={tank}>
                     <td className="tank-id">{tank}</td>
@@ -571,6 +581,7 @@ function ReadingCard({ reading, isExpanded, onToggle, onEdit, onDelete }: { read
                     <td>{formatNumber(t?.temperatureC)}</td>
                     <td>{formatNumber(t?.tovM3)}</td>
                     <td>{formatNumber(t?.gsvM3)}</td>
+                    <td className={gsvDiff != null && gsvDiff < 0 ? "diff-negative" : ""}>{gsvDiff != null ? `${gsvDiff > 0 ? "+" : ""}${formatNumber(gsvDiff)}` : "\u2014"}</td>
                   </tr>
                 );
               })}
