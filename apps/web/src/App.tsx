@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -515,66 +515,84 @@ function ChartPanel({ title, data, dataKey, stroke, suffix }: { title: string; d
 // ============================================================
 
 function ReadingsPage({ readings, onAdd, onEdit, onDelete }: { readings: Reading[]; onAdd: () => void; onEdit: (reading: Reading) => void; onDelete: (id?: number) => void }) {
+  const [expanded, setExpanded] = useState<number | null>(null);
+
   return (
     <section className="panel full-width">
       <div className="section-header"><h2>Readings</h2><button className="primary" onClick={onAdd}>Add reading</button></div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th className="sticky-col" rowSpan={2}>Time</th>
-              {TANKS.map((t) => <th key={t} className="tank-group" colSpan={4}>{t}</th>)}
-              <th className="total-group" colSpan={2}>Totals</th>
-              <th rowSpan={2}>Src</th>
-              <th rowSpan={2}>Conf</th>
-              <th rowSpan={2}></th>
-            </tr>
-            <tr>
-              {TANKS.map((t) => (
-                <Fragment key={`${t}-sub`}>
-                  <th>mm</th>
-                  <th>&deg;C</th>
-                  <th>TOV</th>
-                  <th>GSV</th>
-                </Fragment>
-              ))}
-              <th>Level</th>
-              <th>GSV</th>
-            </tr>
-          </thead>
-          <tbody>
-            {readings.map((r) => <ReadingRow key={r.id ?? r.capturedAt} reading={r} onEdit={onEdit} onDelete={onDelete} />)}
-            {!readings.length && <tr><td colSpan={22} style={{ textAlign: "center", color: "var(--text-dim)" }}>No readings yet.</td></tr>}
-          </tbody>
-        </table>
+      <div className="readings-list">
+        {!readings.length && <p className="empty-text">No readings yet.</p>}
+        {readings.map((r) => (
+          <ReadingCard
+            key={r.id ?? r.capturedAt}
+            reading={r}
+            isExpanded={expanded === r.id}
+            onToggle={() => setExpanded(expanded === r.id ? null : r.id ?? null)}
+            onEdit={onEdit}
+            onDelete={onDelete}
+          />
+        ))}
       </div>
     </section>
   );
 }
 
-function ReadingRow({ reading, onEdit, onDelete }: { reading: Reading; onEdit: (r: Reading) => void; onDelete: (id?: number) => void }) {
+function ReadingCard({ reading, isExpanded, onToggle, onEdit, onDelete }: { reading: Reading; isExpanded: boolean; onToggle: () => void; onEdit: (r: Reading) => void; onDelete: (id?: number) => void }) {
   const byTank = Object.fromEntries(reading.tanks.map((t) => [t.tank, t]));
   return (
-    <tr>
-      <td className="sticky-col">{formatDate(reading.capturedAt)}</td>
-      {TANKS.flatMap((tank) => {
-        const item = byTank[tank] as TankReading | undefined;
-        return [
-          <td key={`${tank}-l`}>{formatNumber(item?.levelMm)}</td>,
-          <td key={`${tank}-t`}>{formatNumber(item?.temperatureC)}</td>,
-          <td key={`${tank}-to`}>{formatNumber(item?.tovM3)}</td>,
-          <td key={`${tank}-g`}>{formatNumber(item?.gsvM3)}</td>,
-        ];
-      })}
-      <td className="total-cell">{formatNumber(reading.totalLevelMm)}</td>
-      <td className="total-cell">{formatNumber(reading.totalGsvM3)}</td>
-      <td>{reading.source}</td>
-      <td>{formatConfidence(reading.confidence)}</td>
-      <td className="actions">
-        <button onClick={() => onEdit(reading)}>Edit</button>
-        <button className="danger" onClick={() => onDelete(reading.id)}>Del</button>
-      </td>
-    </tr>
+    <div className={`reading-card ${isExpanded ? "expanded" : ""}`}>
+      <button className="reading-card-header" onClick={onToggle}>
+        <div className="reading-card-summary">
+          <span className="reading-card-time">{formatDate(reading.capturedAt)}</span>
+          <span className={`status-pill ${reading.verified ? "success" : ""}`}>{reading.verified ? "verified" : "unverified"}</span>
+          <span className="reading-card-meta">{reading.source}{reading.confidence != null ? ` \u00B7 ${formatConfidence(reading.confidence)}` : ""}</span>
+        </div>
+        <span className={`reading-card-chevron ${isExpanded ? "open" : ""}`}>{"\u25B6"}</span>
+      </button>
+      {isExpanded && (
+        <div className="reading-card-body">
+          <table className="tank-table">
+            <thead>
+              <tr>
+                <th>Tank</th>
+                <th>Level mm</th>
+                <th>Temp &deg;C</th>
+                <th>TOV m&sup3;</th>
+                <th>GSV m&sup3;</th>
+              </tr>
+            </thead>
+            <tbody>
+              {TANKS.map((tank) => {
+                const t = byTank[tank] as TankReading | undefined;
+                return (
+                  <tr key={tank}>
+                    <td className="tank-id">{tank}</td>
+                    <td>{formatNumber(t?.levelMm)}</td>
+                    <td>{formatNumber(t?.temperatureC)}</td>
+                    <td>{formatNumber(t?.tovM3)}</td>
+                    <td>{formatNumber(t?.gsvM3)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td className="tank-id">Totals</td>
+                <td className="total-cell">{formatNumber(reading.totalLevelMm)}</td>
+                <td></td>
+                <td></td>
+                <td className="total-cell">{formatNumber(reading.totalGsvM3)}</td>
+              </tr>
+            </tfoot>
+          </table>
+          {reading.notes && <p className="reading-notes">{reading.notes}</p>}
+          <div className="reading-card-actions">
+            <button onClick={() => onEdit(reading)}>Edit</button>
+            <button className="danger" onClick={() => onDelete(reading.id)}>Delete</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
