@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "workspace": {
+    "name": "cloghan-tank-monitor-v2",
+    "createdAt": 1781294319856,
+    "preset": "starter"
+  },
+  "authorizedRoots": [
+    "C:\\Users\\alankerr\\Desktop\\cloghan-tank-monitor-v2"
+  ],
+  "reload": null
+}

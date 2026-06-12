@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+runtime/data/*.sqlite
+runtime/data/*.sqlite-*
+runtime/screenshots/*
+!runtime/screenshots/.gitkeep
+*.log

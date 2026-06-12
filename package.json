@@ -1,0 +1,39 @@
+{
+  "name": "cloghan-tank-monitor-v2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch apps/server/src/index.ts",
+    "dev:web": "vite --host 127.0.0.1 --port 5173 apps/web",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -p apps/server/tsconfig.json",
+    "build:web": "vite build apps/web",
+    "start": "node dist/server/index.js",
+    "typecheck": "tsc -p apps/server/tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "latest",
+    "@vitejs/plugin-react": "latest",
+    "better-sqlite3": "latest",
+    "concurrently": "latest",
+    "dotenv": "latest",
+    "fastify": "latest",
+    "node-notifier": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "recharts": "latest",
+    "screenshot-desktop": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
+    "@types/node-notifier": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}
