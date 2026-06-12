@@ -11,6 +11,7 @@ import {
 
 const API_BASE = "http://localhost:3000/api";
 const TANKS = ["C1", "C2", "C3", "C4"] as const;
+const MAX_LEVEL = 22000; // approximate max mm for visual scaling
 
 type Page = "dashboard" | "readings" | "settings" | "history";
 type RefreshStatus = "idle" | "running" | "success" | "warning" | "failed" | "needs_review";
@@ -137,6 +138,10 @@ const defaultSettings: Settings = {
   aiConfigured: false,
 };
 
+// ============================================================
+// App
+// ============================================================
+
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [readings, setReadings] = useState<Reading[]>([]);
@@ -149,9 +154,7 @@ function App() {
   const [editing, setEditing] = useState<Reading | null>(null);
   const [review, setReview] = useState<RefreshResult | null>(null);
 
-  useEffect(() => {
-    void loadAll();
-  }, []);
+  useEffect(() => { void loadAll(); }, []);
 
   async function loadAll() {
     setLoading(true);
@@ -173,14 +176,14 @@ function App() {
 
   async function refreshData() {
     setRefreshStatus("running");
-    setRefreshMessage("Capturing and extracting tank table...");
+    setRefreshMessage("Capturing screens and extracting tank data\u2026");
     try {
       const result = (await apiRequest("/refresh", { method: "POST" })) as RefreshResult;
       setRefreshStatus(result.status);
       setRefreshMessage(result.message || labelStatus(result.status));
       if (result.status === "needs_review") {
         setReview(result);
-        pushToast("warning", "Low confidence extraction - review required.");
+        pushToast("warning", "Low confidence \u2014 review the extraction before saving.");
         return;
       }
       notifyForRefresh(result);
@@ -188,7 +191,7 @@ function App() {
     } catch (error) {
       setRefreshStatus("failed");
       setRefreshMessage(messageFromError(error));
-      pushToast("error", `Refresh failed - ${messageFromError(error)}`);
+      pushToast("error", `Refresh failed \u2014 ${messageFromError(error)}`);
     }
   }
 
@@ -205,8 +208,8 @@ function App() {
       })) as RefreshResult;
       setReview(null);
       setRefreshStatus(result.status || "success");
-      setRefreshMessage(result.message || "Reviewed reading inserted.");
-      notifyForRefresh(result.status ? result : { status: "success", message: "Reviewed reading inserted." });
+      setRefreshMessage(result.message || "Confirmed reading saved.");
+      notifyForRefresh(result.status ? result : { status: "success", message: "Confirmed reading saved." });
       await loadAll();
     } catch (error) {
       pushToast("error", messageFromError(error));
@@ -255,14 +258,12 @@ function App() {
   function pushToast(kind: ToastKind, message: string) {
     const id = Date.now() + Math.random();
     setToasts((items) => [...items, { id, kind, message }]);
-    window.setTimeout(() => {
-      setToasts((items) => items.filter((item) => item.id !== id));
-    }, 4500);
+    window.setTimeout(() => setToasts((items) => items.filter((t) => t.id !== id)), 4500);
   }
 
   function notifyForRefresh(result: RefreshResult) {
     if (result.status === "success") {
-      pushToast("success", result.readingId ? `Refresh successful - reading #${result.readingId} inserted.` : result.message || "Refresh successful.");
+      pushToast("success", result.readingId ? `Reading #${result.readingId} saved.` : result.message || "Refresh complete.");
     } else if (result.status === "warning" || result.status === "needs_review") {
       pushToast("warning", result.message || "Refresh completed with a warning.");
     } else if (result.status === "failed") {
@@ -287,27 +288,22 @@ function App() {
         progress={progress}
       />
       <main className="container">
-        {loading ? <div className="panel">Loading tank monitor data...</div> : null}
-        {!loading && page === "dashboard" ? <Dashboard readings={readings} latest={latest} previous={previous} runs={runs} /> : null}
-        {!loading && page === "readings" ? <ReadingsPage readings={readings} onAdd={() => setEditing(emptyReading())} onEdit={setEditing} onDelete={deleteReading} /> : null}
-        {!loading && page === "settings" ? <SettingsPage settings={settings} onSave={saveSettings} /> : null}
-        {!loading && page === "history" ? <HistoryPage runs={runs} /> : null}
+        {loading && <Panel>Loading\u2026</Panel>}
+        {!loading && page === "dashboard" && <Dashboard readings={readings} latest={latest} previous={previous} runs={runs} />}
+        {!loading && page === "readings" && <ReadingsPage readings={readings} onAdd={() => setEditing(emptyReading())} onEdit={setEditing} onDelete={deleteReading} />}
+        {!loading && page === "settings" && <SettingsPage settings={settings} onSave={saveSettings} />}
+        {!loading && page === "history" && <HistoryPage runs={runs} />}
       </main>
-      {editing ? <ReadingModal title={editing.id ? "Edit Reading" : "Add Reading"} initial={editing} onSave={saveReading} onClose={() => setEditing(null)} /> : null}
-      {review?.reading ? (
+      {editing && <ReadingModal title={editing.id ? "Edit reading" : "Add reading"} initial={editing} onSave={saveReading} onClose={() => setEditing(null)} />}
+      {review?.reading && (
         <ReadingModal
-          title="Review Low-Confidence Extraction"
+          title="Review extraction"
           initial={normalizeReading(review.reading)}
-          confirmLabel="Confirm Insert"
+          confirmLabel="Confirm"
           onSave={confirmReview}
-          onClose={() => {
-            setReview(null);
-            setRefreshStatus("warning");
-            setRefreshMessage("Low-confidence extraction cancelled.");
-            pushToast("info", "Low-confidence extraction cancelled.");
-          }}
+          onClose={() => { setReview(null); setRefreshStatus("warning"); setRefreshMessage("Extraction cancelled."); pushToast("info", "Extraction cancelled."); }}
         />
-      ) : null}
+      )}
       <div className="toast-stack">
         {toasts.map((toast) => (
           <div key={toast.id} className={`toast ${toast.kind}`}>{toast.message}</div>
@@ -316,6 +312,10 @@ function App() {
     </div>
   );
 }
+
+// ============================================================
+// Header
+// ============================================================
 
 function Header(props: {
   page: Page;
@@ -328,12 +328,12 @@ function Header(props: {
   return (
     <header className="site-header">
       <div className="header-top">
-        <div>
-          <p className="eyebrow">Local monitoring</p>
-          <h1>Cloghan Tank Monitor</h1>
+        <div className="header-title">
+          <span className="eyebrow">Cloghan Terminal</span>
+          <h1>Tank Monitor</h1>
         </div>
         <button className="primary" onClick={props.refreshData} disabled={props.refreshStatus === "running"}>
-          {props.refreshStatus === "running" ? "Refreshing..." : "Refresh Data"}
+          {props.refreshStatus === "running" ? "Extracting\u2026" : "Refresh"}
         </button>
       </div>
       <div className="status-row">
@@ -341,10 +341,16 @@ function Header(props: {
         <span>{props.refreshMessage}</span>
       </div>
       <div className="progress-track"><div className="progress-fill" style={{ width: `${props.progress}%` }} /></div>
-      <nav className="tabs">
+      <nav className="tabs" role="tablist">
         {(["dashboard", "readings", "settings", "history"] as Page[]).map((item) => (
-          <button key={item} className={props.page === item ? "active" : ""} onClick={() => props.setPage(item)}>
-            {item === "history" ? "Refresh History" : titleCase(item)}
+          <button
+            key={item}
+            role="tab"
+            aria-selected={props.page === item}
+            className={props.page === item ? "active" : ""}
+            onClick={() => props.setPage(item)}
+          >
+            {item === "history" ? "History" : titleCase(item)}
           </button>
         ))}
       </nav>
@@ -352,96 +358,182 @@ function Header(props: {
   );
 }
 
+// ============================================================
+// Dashboard
+// ============================================================
+
 function Dashboard({ readings, latest, previous, runs }: { readings: Reading[]; latest?: Reading; previous?: Reading; runs: RefreshRun[] }) {
-  const chartData = readings.slice(0, 24).reverse().map((reading) => ({
-    time: formatShortDate(reading.capturedAt),
-    level: reading.totalLevelMm ?? 0,
-    gsv: reading.totalGsvM3 ?? 0,
+  if (!latest) {
+    return <div className="page-grid"><div className="empty-state">No readings yet. Click Refresh to capture tank data.</div></div>;
+  }
+
+  const chartData = readings.slice(0, 30).reverse().map((r) => ({
+    time: formatShortDate(r.capturedAt),
+    level: r.totalLevelMm ?? 0,
+    gsv: r.totalGsvM3 ?? 0,
   }));
+
   const latestRun = runs[0];
+
   return (
     <div className="page-grid">
+      {/* Tank visualisations — the signature element */}
+      <TankVisualisations latest={latest} />
+
+      {/* Hero metrics */}
       <section className="panel hero-panel">
-        <div>
-          <p className="eyebrow">Latest reading</p>
-          <h2>{latest ? formatDate(latest.capturedAt) : "No readings yet"}</h2>
-          <p>{latest ? `${latest.source} source - ${formatConfidence(latest.confidence)} confidence` : "Run a refresh or add a manual reading."}</p>
-        </div>
-        <div className="metric-pair">
-          <Metric label="Total Level" value={formatNumber(latest?.totalLevelMm, " mm")} delta={diffLabel(latest?.totalLevelDiffMm, previous?.totalLevelDiffMm, " mm")} />
-          <Metric label="Total GSV" value={formatNumber(latest?.totalGsvM3, " m3")} delta={diffLabel(latest?.totalGsvDiffM3, previous?.totalGsvDiffM3, " m3")} />
-        </div>
-      </section>
-      <section className="cards-grid">
-        {TANKS.map((tank) => {
-          const tankReading = latest?.tanks.find((item) => item.tank === tank);
-          return <TankCard key={tank} tank={tank} reading={tankReading} />;
-        })}
-      </section>
-      <ChartPanel title="Level Trend" data={chartData} dataKey="level" stroke="#2563eb" suffix=" mm" />
-      <ChartPanel title="GSV Trend" data={chartData} dataKey="gsv" stroke="#0f766e" suffix=" m3" />
-      <section className="panel">
-        <h3>Recent Refresh Status</h3>
-        {latestRun ? (
-          <div className="history-summary">
-            <span className={`status-pill ${latestRun.status}`}>{latestRun.status}</span>
-            <strong>{latestRun.message || "No message"}</strong>
-            <span>{formatDate(latestRun.startedAt)} - {formatDuration(latestRun.durationMs)}</span>
+        <div className="hero-metrics">
+          <div className="hero-metric">
+            <span className="hero-metric-label">Total level</span>
+            <strong className="hero-metric-value">{formatNumber(latest.totalLevelMm, " mm")}</strong>
+            {latest.totalLevelDiffMm != null && previous?.totalLevelDiffMm != null && (
+              <span className={`hero-metric-delta ${latest.totalLevelDiffMm < 0 ? "negative" : ""}`}>
+                {latest.totalLevelDiffMm > 0 ? "+" : ""}{formatNumber(latest.totalLevelDiffMm, " mm")}
+              </span>
+            )}
           </div>
-        ) : <p>No refresh attempts recorded.</p>}
+          <div className="hero-metric">
+            <span className="hero-metric-label">Total GSV</span>
+            <strong className="hero-metric-value">{formatNumber(latest.totalGsvM3, " m\u00B3")}</strong>
+            {latest.totalGsvDiffM3 != null && previous?.totalGsvDiffM3 != null && (
+              <span className={`hero-metric-delta ${latest.totalGsvDiffM3 < 0 ? "negative" : ""}`}>
+                {latest.totalGsvDiffM3 > 0 ? "+" : ""}{formatNumber(latest.totalGsvDiffM3, " m\u00B3")}
+              </span>
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="hero-timestamp">{formatDate(latest.capturedAt)}</p>
+          <p className="hero-timestamp">{latest.source} &middot; {formatConfidence(latest.confidence)}</p>
+          {latestRun && (
+            <div className="history-summary" style={{ marginTop: "0.75rem" }}>
+              <span className={`status-pill ${latestRun.status}`}>{latestRun.status}</span>
+              <strong>{latestRun.message || "No message"}</strong>
+              <span>{formatDuration(latestRun.durationMs)}</span>
+            </div>
+          )}
+        </div>
       </section>
+
+      {/* Charts */}
+      <ChartPanel title="Level trend" data={chartData} dataKey="level" stroke="var(--accent-cyan)" suffix=" mm" />
+      <ChartPanel title="GSV trend" data={chartData} dataKey="gsv" stroke="var(--accent-green)" suffix=" m\u00B3" />
     </div>
   );
 }
 
-function Metric({ label, value, delta }: { label: string; value: string; delta?: string }) {
-  return <div className="metric"><span>{label}</span><strong>{value}</strong>{delta ? <small>{delta}</small> : null}</div>;
-}
+// ============================================================
+// Tank Visualisations (signature element)
+// ============================================================
 
-function TankCard({ tank, reading }: { tank: TankName; reading?: TankReading }) {
+function TankVisualisations({ latest }: { latest: Reading }) {
   return (
-    <article className="tank-card">
-      <div className="tank-badge">{tank}</div>
-      <Metric label="Level" value={formatNumber(reading?.levelMm, " mm")} />
-      <Metric label="GSV" value={formatNumber(reading?.gsvM3, " m3")} />
-      <span className="muted">Temp {formatNumber(reading?.temperatureC, " C")} - TOV {formatNumber(reading?.tovM3, " m3")}</span>
-    </article>
+    <section className="tanks-visual">
+      <div className="tanks-visual-header">
+        <h2>Tank levels</h2>
+        <span className="eyebrow">{formatDate(latest.capturedAt)}</span>
+      </div>
+      <div className="tanks-grid">
+        {TANKS.map((tank) => {
+          const t = latest.tanks.find((item) => item.tank === tank);
+          return <TankViz key={tank} tank={tank} reading={t} />;
+        })}
+      </div>
+    </section>
   );
 }
+
+function TankViz({ tank, reading }: { tank: TankName; reading?: TankReading }) {
+  const level = reading?.levelMm;
+  const fillPct = level != null ? Math.min((level / MAX_LEVEL) * 100, 100) : 0;
+
+  return (
+    <div className="tank-viz">
+      <span className="tank-viz-label">{tank}</span>
+      <div className="tank-viz-body">
+        <div className="tank-viz-shell">
+          <div className="tank-viz-fill" style={{ height: `${fillPct}%` }} />
+        </div>
+        <div className="tank-viz-ticks">
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <span key={i} className="tank-viz-tick" />)}
+        </div>
+      </div>
+      <span className="tank-viz-value">
+        {level != null ? formatNumber(level) : "\u2014"}
+        {level != null && <span className="tank-viz-unit"> mm</span>}
+      </span>
+      <div className="tank-viz-meta">
+        <div className="tank-viz-meta-row">
+          <span className="tank-viz-meta-label">Temp</span>
+          <span className="tank-viz-meta-value">{reading?.temperatureC != null ? `${reading.temperatureC}\u00B0C` : "\u2014"}</span>
+        </div>
+        <div className="tank-viz-meta-row">
+          <span className="tank-viz-meta-label">TOV</span>
+          <span className="tank-viz-meta-value">{reading?.tovM3 != null ? `${formatNumber(reading.tovM3)} m\u00B3` : "\u2014"}</span>
+        </div>
+        <div className="tank-viz-meta-row">
+          <span className="tank-viz-meta-label">GSV</span>
+          <span className="tank-viz-meta-value">{reading?.gsvM3 != null ? `${formatNumber(reading.gsvM3)} m\u00B3` : "\u2014"}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Charts
+// ============================================================
 
 function ChartPanel({ title, data, dataKey, stroke, suffix }: { title: string; data: Array<Record<string, string | number>>; dataKey: string; stroke: string; suffix: string }) {
   return (
     <section className="panel chart-panel">
       <h3>{title}</h3>
       {data.length ? (
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={data} margin={{ top: 10, right: 20, bottom: 5, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="time" minTickGap={24} />
-            <YAxis width={72} />
-            <Tooltip formatter={(value) => [`${value}${suffix}`, title]} />
-            <Line type="monotone" dataKey={dataKey} stroke={stroke} strokeWidth={2} dot={false} />
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={data} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="time" minTickGap={28} tick={{ fill: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }} axisLine={{ stroke: "var(--border)" }} tickLine={{ stroke: "var(--border)" }} />
+            <YAxis width={68} tick={{ fill: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }} axisLine={{ stroke: "var(--border)" }} tickLine={{ stroke: "var(--border)" }} />
+            <Tooltip
+              contentStyle={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12 }}
+              labelStyle={{ color: "var(--text-dim)" }}
+              itemStyle={{ color: "var(--text-primary)" }}
+              formatter={(value) => [`${Number(value).toLocaleString()}${suffix}`, title]}
+            />
+            <Line type="monotone" dataKey={dataKey} stroke={stroke} strokeWidth={1.5} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} />
           </LineChart>
         </ResponsiveContainer>
-      ) : <p>No chart data available.</p>}
+      ) : (
+        <p style={{ color: "var(--text-dim)", margin: 0 }}>No data yet.</p>
+      )}
     </section>
   );
 }
 
+// ============================================================
+// Readings Page
+// ============================================================
+
 function ReadingsPage({ readings, onAdd, onEdit, onDelete }: { readings: Reading[]; onAdd: () => void; onEdit: (reading: Reading) => void; onDelete: (id?: number) => void }) {
   return (
     <section className="panel full-width">
-      <div className="section-header"><h2>Readings</h2><button className="primary" onClick={onAdd}>Add Reading</button></div>
+      <div className="section-header"><h2>Readings</h2><button className="primary" onClick={onAdd}>Add reading</button></div>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Timestamp</th><th>C1 level</th><th>C1 temp</th><th>C1 TOV</th><th>C1 GSV</th><th>C2 level</th><th>C2 temp</th><th>C2 TOV</th><th>C2 GSV</th><th>C3 level</th><th>C3 temp</th><th>C3 TOV</th><th>C3 GSV</th><th>C4 level</th><th>C4 temp</th><th>C4 TOV</th><th>C4 GSV</th><th>Total level</th><th>Level diff</th><th>Total GSV</th><th>GSV diff</th><th>Source</th><th>Confidence</th><th>Verified</th><th>Actions</th>
+              <th>Time</th>
+              <th>C1 lvl</th><th>C1 &deg;C</th><th>C1 TOV</th><th>C1 GSV</th>
+              <th>C2 lvl</th><th>C2 &deg;C</th><th>C2 TOV</th><th>C2 GSV</th>
+              <th>C3 lvl</th><th>C3 &deg;C</th><th>C3 TOV</th><th>C3 GSV</th>
+              <th>C4 lvl</th><th>C4 &deg;C</th><th>C4 TOV</th><th>C4 GSV</th>
+              <th>Total</th><th>&Delta;</th><th>GSV</th><th>&Delta; GSV</th>
+              <th>Source</th><th>Conf.</th><th>OK</th><th></th>
             </tr>
           </thead>
           <tbody>
-            {readings.map((reading) => <ReadingRow key={reading.id ?? reading.capturedAt} reading={reading} onEdit={onEdit} onDelete={onDelete} />)}
-            {!readings.length ? <tr><td colSpan={25}>No readings found.</td></tr> : null}
+            {readings.map((r) => <ReadingRow key={r.id ?? r.capturedAt} reading={r} onEdit={onEdit} onDelete={onDelete} />)}
+            {!readings.length && <tr><td colSpan={25} style={{ textAlign: "center", color: "var(--text-dim)" }}>No readings found.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -449,78 +541,192 @@ function ReadingsPage({ readings, onAdd, onEdit, onDelete }: { readings: Reading
   );
 }
 
-function ReadingRow({ reading, onEdit, onDelete }: { reading: Reading; onEdit: (reading: Reading) => void; onDelete: (id?: number) => void }) {
-  const byTank = Object.fromEntries(reading.tanks.map((tank) => [tank.tank, tank]));
+function ReadingRow({ reading, onEdit, onDelete }: { reading: Reading; onEdit: (r: Reading) => void; onDelete: (id?: number) => void }) {
+  const byTank = Object.fromEntries(reading.tanks.map((t) => [t.tank, t]));
   return (
     <tr>
-      <td>{formatDate(reading.capturedAt)}</td>
+      <td style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem" }}>{formatDate(reading.capturedAt)}</td>
       {TANKS.flatMap((tank) => {
         const item = byTank[tank] as TankReading | undefined;
         return [
-          <td key={`${tank}-level`}>{formatNumber(item?.levelMm)}</td>,
-          <td key={`${tank}-temp`}>{formatNumber(item?.temperatureC)}</td>,
-          <td key={`${tank}-tov`}>{formatNumber(item?.tovM3)}</td>,
-          <td key={`${tank}-gsv`}>{formatNumber(item?.gsvM3)}</td>,
+          <td key={`${tank}-l`}>{formatNumber(item?.levelMm)}</td>,
+          <td key={`${tank}-t`}>{formatNumber(item?.temperatureC)}</td>,
+          <td key={`${tank}-to`}>{formatNumber(item?.tovM3)}</td>,
+          <td key={`${tank}-g`}>{formatNumber(item?.gsvM3)}</td>,
         ];
       })}
-      <td>{formatNumber(reading.totalLevelMm)}</td><td>{formatNumber(reading.totalLevelDiffMm)}</td><td>{formatNumber(reading.totalGsvM3)}</td><td>{formatNumber(reading.totalGsvDiffM3)}</td><td>{reading.source}</td><td>{formatConfidence(reading.confidence)}</td><td>{reading.verified ? "Yes" : "No"}</td>
-      <td className="actions"><button onClick={() => onEdit(reading)}>Edit</button><button className="danger" onClick={() => onDelete(reading.id)}>Delete</button></td>
+      <td style={{ fontWeight: 600 }}>{formatNumber(reading.totalLevelMm)}</td>
+      <td>{formatNumber(reading.totalLevelDiffMm)}</td>
+      <td style={{ fontWeight: 600 }}>{formatNumber(reading.totalGsvM3)}</td>
+      <td>{formatNumber(reading.totalGsvDiffM3)}</td>
+      <td>{reading.source}</td>
+      <td>{formatConfidence(reading.confidence)}</td>
+      <td>{reading.verified ? "\u2713" : "\u2014"}</td>
+      <td className="actions">
+        <button onClick={() => onEdit(reading)}>Edit</button>
+        <button className="danger" onClick={() => onDelete(reading.id)}>Del</button>
+      </td>
     </tr>
   );
 }
 
-function SettingsPage({ settings, onSave }: { settings: Settings; onSave: (settings: Settings) => void }) {
+// ============================================================
+// Settings Page
+// ============================================================
+
+function SettingsPage({ settings, onSave }: { settings: Settings; onSave: (s: Settings) => void }) {
   const [draft, setDraft] = useState(settings);
   useEffect(() => setDraft(settings), [settings]);
   return (
     <section className="panel settings-panel">
-      <div className="section-header"><h2>Settings</h2><button className="primary" onClick={() => onSave(draft)}>Save Settings</button></div>
-      <label>Refresh schedule<select value={draft.scheduleMode} onChange={(event) => setDraft({ ...draft, scheduleMode: event.target.value as Settings["scheduleMode"] })}><option value="manual">Manual only</option><option value="10m">Every 10 minutes</option><option value="30m">Every 30 minutes</option><option value="1h">Every hour</option><option value="custom">Custom interval</option></select></label>
-      <label>Custom interval minutes<input type="number" min="1" value={draft.customIntervalMinutes} onChange={(event) => setDraft({ ...draft, customIntervalMinutes: Number(event.target.value) })} disabled={draft.scheduleMode !== "custom"} /></label>
-      <div className="check-grid"><label><input type="checkbox" checked={draft.notifySuccess} onChange={(event) => setDraft({ ...draft, notifySuccess: event.target.checked })} /> Notify on success</label><label><input type="checkbox" checked={draft.notifyWarning} onChange={(event) => setDraft({ ...draft, notifyWarning: event.target.checked })} /> Notify on warning</label><label><input type="checkbox" checked={draft.notifyFailure} onChange={(event) => setDraft({ ...draft, notifyFailure: event.target.checked })} /> Notify on failure</label></div>
-      <div className="readonly-grid"><div><span>Screenshot retention</span><strong>{draft.screenshotRetentionHours ?? 3} hours for successful refreshes</strong></div><div><span>AI config</span><strong>{draft.aiConfigured ? "Configured" : "Not configured"}</strong></div><div><span>AI base URL</span><strong>{draft.aiBaseUrl || "From .env only"}</strong></div><div><span>AI model</span><strong>{draft.aiModel || "From .env only"}</strong></div></div>
+      <div className="section-header"><h2>Settings</h2><button className="primary" onClick={() => onSave(draft)}>Save</button></div>
+      <label>
+        Refresh schedule
+        <select value={draft.scheduleMode} onChange={(e) => setDraft({ ...draft, scheduleMode: e.target.value as Settings["scheduleMode"] })}>
+          <option value="manual">Manual only</option>
+          <option value="10m">Every 10 minutes</option>
+          <option value="30m">Every 30 minutes</option>
+          <option value="1h">Every hour</option>
+          <option value="custom">Custom interval</option>
+        </select>
+      </label>
+      <label>
+        Custom interval (minutes)
+        <input type="number" min="1" value={draft.customIntervalMinutes} onChange={(e) => setDraft({ ...draft, customIntervalMinutes: Number(e.target.value) })} disabled={draft.scheduleMode !== "custom"} />
+      </label>
+      <div className="check-grid">
+        <label><input type="checkbox" checked={draft.notifySuccess} onChange={(e) => setDraft({ ...draft, notifySuccess: e.target.checked })} /> On success</label>
+        <label><input type="checkbox" checked={draft.notifyWarning} onChange={(e) => setDraft({ ...draft, notifyWarning: e.target.checked })} /> On warning</label>
+        <label><input type="checkbox" checked={draft.notifyFailure} onChange={(e) => setDraft({ ...draft, notifyFailure: e.target.checked })} /> On failure</label>
+      </div>
+      <div className="readonly-grid">
+        <div><span>Screenshots</span><strong>{draft.screenshotRetentionHours ?? 3}h retention</strong></div>
+        <div><span>AI model</span><strong>{draft.aiModel || "Not configured"}</strong></div>
+        <div><span>AI status</span><strong>{draft.aiConfigured ? "Connected" : "Not configured"}</strong></div>
+        <div><span>AI endpoint</span><strong>{draft.aiBaseUrl || "From .env"}</strong></div>
+      </div>
+      {settings.scheduler && (
+        <div className="readonly-grid">
+          <div><span>Next refresh</span><strong>{settings.scheduler.nextRunAt ? formatDate(settings.scheduler.nextRunAt) : "Manual"}</strong></div>
+          <div><span>Scheduler</span><strong>{settings.scheduler.running ? "Running" : settings.scheduler.message}</strong></div>
+        </div>
+      )}
     </section>
   );
 }
+
+// ============================================================
+// History Page
+// ============================================================
 
 function HistoryPage({ runs }: { runs: RefreshRun[] }) {
   return (
     <section className="panel full-width">
-      <h2>Refresh History</h2>
-      <div className="table-wrap"><table><thead><tr><th>Started at</th><th>Finished at</th><th>Status</th><th>Error code</th><th>Message</th><th>Confidence</th><th>Duration</th><th>Reading ID</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id ?? run.startedAt}><td>{formatDate(run.startedAt)}</td><td>{run.finishedAt ? formatDate(run.finishedAt) : "-"}</td><td><span className={`status-pill ${run.status}`}>{run.status}</span></td><td>{run.errorCode || "-"}</td><td>{run.message || "-"}</td><td>{formatConfidence(run.confidence)}</td><td>{formatDuration(run.durationMs)}</td><td>{run.readingId ?? "-"}</td></tr>)}{!runs.length ? <tr><td colSpan={8}>No refresh attempts found.</td></tr> : null}</tbody></table></div>
+      <div className="section-header"><h2>Refresh history</h2></div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Started</th><th>Finished</th><th>Status</th><th>Error</th><th>Message</th><th>Confidence</th><th>Duration</th><th>Reading</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run) => (
+              <tr key={run.id ?? run.startedAt}>
+                <td style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem" }}>{formatDate(run.startedAt)}</td>
+                <td>{run.finishedAt ? formatDate(run.finishedAt) : "\u2014"}</td>
+                <td><span className={`status-pill ${run.status}`}>{run.status}</span></td>
+                <td>{run.errorCode || "\u2014"}</td>
+                <td>{run.message || "\u2014"}</td>
+                <td>{formatConfidence(run.confidence)}</td>
+                <td style={{ fontFamily: "var(--font-mono)" }}>{formatDuration(run.durationMs)}</td>
+                <td>{run.readingId ?? "\u2014"}</td>
+              </tr>
+            ))}
+            {!runs.length && <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--text-dim)" }}>No refresh attempts yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
 
-function ReadingModal({ title, initial, confirmLabel = "Save Reading", onSave, onClose }: { title: string; initial: Reading; confirmLabel?: string; onSave: (reading: Reading) => void; onClose: () => void }) {
+// ============================================================
+// Modal
+// ============================================================
+
+function ReadingModal({ title, initial, confirmLabel = "Save", onSave, onClose }: { title: string; initial: Reading; confirmLabel?: string; onSave: (r: Reading) => void; onClose: () => void }) {
   const [draft, setDraft] = useState(normalizeReading(initial));
-  const setField = (key: keyof Reading, value: Reading[keyof Reading]) => setDraft((current) => ({ ...current, [key]: value }));
-  const setTank = (tank: string, key: keyof TankReading, value: number | null) => setDraft((current) => ({ ...current, tanks: current.tanks.map((item) => item.tank === tank ? { ...item, [key]: value } : item) }));
+  const setField = (key: keyof Reading, value: Reading[keyof Reading]) => setDraft((c) => ({ ...c, [key]: value }));
+  const setTank = (tank: string, key: keyof TankReading, value: number | null) =>
+    setDraft((c) => ({ ...c, tanks: c.tanks.map((t) => t.tank === tank ? { ...t, [key]: value } : t) }));
+
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-card">
         <div className="section-header"><h2>{title}</h2><button onClick={onClose}>Cancel</button></div>
-        <div className="form-grid"><label>Captured at<input type="datetime-local" value={toDateTimeLocal(draft.capturedAt)} onChange={(event) => setField("capturedAt", new Date(event.target.value).toISOString())} /></label><label>Source<input value={draft.source} onChange={(event) => setField("source", event.target.value)} /></label><label>Confidence<input type="number" step="0.01" min="0" max="1" value={draft.confidence ?? ""} onChange={(event) => setField("confidence", nullableNumber(event.target.value))} /></label><label className="checkbox-label"><input type="checkbox" checked={draft.verified} onChange={(event) => setField("verified", event.target.checked)} /> Verified</label></div>
-        <div className="tank-form-grid">{draft.tanks.map((tank) => <fieldset key={tank.tank}><legend>{tank.tank}</legend><label>Level mm<input type="number" value={tank.levelMm ?? ""} onChange={(event) => setTank(tank.tank, "levelMm", nullableNumber(event.target.value))} /></label><label>Temperature C<input type="number" step="0.01" value={tank.temperatureC ?? ""} onChange={(event) => setTank(tank.tank, "temperatureC", nullableNumber(event.target.value))} /></label><label>TOV m3<input type="number" step="0.001" value={tank.tovM3 ?? ""} onChange={(event) => setTank(tank.tank, "tovM3", nullableNumber(event.target.value))} /></label><label>GSV m3<input type="number" step="0.001" value={tank.gsvM3 ?? ""} onChange={(event) => setTank(tank.tank, "gsvM3", nullableNumber(event.target.value))} /></label></fieldset>)}</div>
-        <div className="form-grid"><label>Total level mm<input type="number" value={draft.totalLevelMm ?? ""} onChange={(event) => setField("totalLevelMm", nullableNumber(event.target.value))} /></label><label>Total level diff mm<input type="number" value={draft.totalLevelDiffMm ?? ""} onChange={(event) => setField("totalLevelDiffMm", nullableNumber(event.target.value))} /></label><label>Total GSV m3<input type="number" step="0.001" value={draft.totalGsvM3 ?? ""} onChange={(event) => setField("totalGsvM3", nullableNumber(event.target.value))} /></label><label>Total GSV diff m3<input type="number" step="0.001" value={draft.totalGsvDiffM3 ?? ""} onChange={(event) => setField("totalGsvDiffM3", nullableNumber(event.target.value))} /></label></div>
-        <label>Notes<textarea value={draft.notes ?? ""} onChange={(event) => setField("notes", event.target.value)} /></label>
-        <div className="modal-actions"><button onClick={onClose}>Cancel</button><button className="primary" onClick={() => onSave(draft)}>{confirmLabel}</button></div>
+        <div className="form-grid">
+          <label>Captured at<input type="datetime-local" value={toDateTimeLocal(draft.capturedAt)} onChange={(e) => setField("capturedAt", new Date(e.target.value).toISOString())} /></label>
+          <label>Source<input value={draft.source} onChange={(e) => setField("source", e.target.value)} /></label>
+          <label>Confidence<input type="number" step="0.01" min="0" max="1" value={draft.confidence ?? ""} onChange={(e) => setField("confidence", nullableNumber(e.target.value))} /></label>
+          <label className="checkbox-label" style={{ marginTop: "1.4rem" }}><input type="checkbox" checked={draft.verified} onChange={(e) => setField("verified", e.target.checked)} /> Verified</label>
+        </div>
+        <div className="tank-form-grid">
+          {draft.tanks.map((tank) => (
+            <fieldset key={tank.tank}>
+              <legend>{tank.tank}</legend>
+              <label>Level (mm)<input type="number" value={tank.levelMm ?? ""} onChange={(e) => setTank(tank.tank, "levelMm", nullableNumber(e.target.value))} /></label>
+              <label>Temp (&deg;C)<input type="number" step="0.01" value={tank.temperatureC ?? ""} onChange={(e) => setTank(tank.tank, "temperatureC", nullableNumber(e.target.value))} /></label>
+              <label>TOV (m&sup3;)<input type="number" step="0.001" value={tank.tovM3 ?? ""} onChange={(e) => setTank(tank.tank, "tovM3", nullableNumber(e.target.value))} /></label>
+              <label>GSV (m&sup3;)<input type="number" step="0.001" value={tank.gsvM3 ?? ""} onChange={(e) => setTank(tank.tank, "gsvM3", nullableNumber(e.target.value))} /></label>
+            </fieldset>
+          ))}
+        </div>
+        <div className="form-grid">
+          <label>Total level (mm)<input type="number" value={draft.totalLevelMm ?? ""} onChange={(e) => setField("totalLevelMm", nullableNumber(e.target.value))} /></label>
+          <label>Level diff (mm)<input type="number" value={draft.totalLevelDiffMm ?? ""} onChange={(e) => setField("totalLevelDiffMm", nullableNumber(e.target.value))} /></label>
+          <label>Total GSV (m&sup3;)<input type="number" step="0.001" value={draft.totalGsvM3 ?? ""} onChange={(e) => setField("totalGsvM3", nullableNumber(e.target.value))} /></label>
+          <label>GSV diff (m&sup3;)<input type="number" step="0.001" value={draft.totalGsvDiffM3 ?? ""} onChange={(e) => setField("totalGsvDiffM3", nullableNumber(e.target.value))} /></label>
+        </div>
+        <label>Notes<textarea value={draft.notes ?? ""} onChange={(e) => setField("notes", e.target.value)} /></label>
+        <div className="modal-actions">
+          <button onClick={onClose}>Cancel</button>
+          <button className="primary" onClick={() => onSave(draft)}>{confirmLabel}</button>
+        </div>
       </div>
     </div>
   );
 }
+
+// ============================================================
+// Small shared components
+// ============================================================
+
+function Panel({ children }: { children: React.ReactNode }) {
+  return <div className="panel full-width">{children}</div>;
+}
+
+// ============================================================
+// API layer
+// ============================================================
 
 async function apiGet(path: string) {
   return apiRequest(path, { method: "GET" });
 }
 
 async function apiRequest(path: string, init: RequestInit) {
-  const response = await fetch(`${API_BASE}${path}`, { headers: { "Content-Type": "application/json" }, ...init });
+  const hasBody = init.body !== undefined && init.body !== null;
+  const headers: Record<string, string> = hasBody ? { "Content-Type": "application/json" } : {};
+  const response = await fetch(`${API_BASE}${path}`, { headers, ...init });
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) throw new Error(data?.message || data?.error || response.statusText);
   return data;
 }
+
+// ============================================================
+// Data normalisation
+// ============================================================
 
 function asReadings(data: unknown): Reading[] {
   const list = Array.isArray(data) ? data : Array.isArray((data as { readings?: unknown[] })?.readings) ? (data as { readings: unknown[] }).readings : [];
@@ -533,63 +739,109 @@ function asRuns(data: unknown): RefreshRun[] {
 }
 
 function asSettings(data: unknown): Settings {
-  const source = ((data as { settings?: unknown })?.settings || data || {}) as Record<string, unknown>;
-  return { ...defaultSettings, scheduleMode: String(source.scheduleMode || source.refreshSchedule || defaultSettings.scheduleMode) as Settings["scheduleMode"], customIntervalMinutes: Number(source.customIntervalMinutes || defaultSettings.customIntervalMinutes), notifySuccess: toBool(source.notifySuccess, true), notifyWarning: toBool(source.notifyWarning, true), notifyFailure: toBool(source.notifyFailure, true), screenshotRetentionHours: source.screenshotRetentionHours == null ? defaultSettings.screenshotRetentionHours : Number(source.screenshotRetentionHours), aiConfigured: toBool(source.aiConfigured || source.ai_configured, false), aiBaseUrl: stringOrUndefined(source.aiBaseUrl), aiModel: stringOrUndefined(source.aiModel) };
+  const src = ((data as { settings?: unknown })?.settings || data || {}) as Record<string, unknown>;
+  return {
+    ...defaultSettings,
+    scheduleMode: String(src.scheduleMode || src.refreshSchedule || defaultSettings.scheduleMode) as Settings["scheduleMode"],
+    customIntervalMinutes: Number(src.customIntervalMinutes || defaultSettings.customIntervalMinutes),
+    notifySuccess: toBool(src.notifySuccess, true),
+    notifyWarning: toBool(src.notifyWarning, true),
+    notifyFailure: toBool(src.notifyFailure, true),
+    screenshotRetentionHours: src.screenshotRetentionHours == null ? defaultSettings.screenshotRetentionHours : Number(src.screenshotRetentionHours),
+    aiConfigured: toBool(src.aiConfigured || src.ai_configured, false),
+    aiBaseUrl: stringOrUndefined(src.aiBaseUrl),
+    aiModel: stringOrUndefined(src.aiModel),
+  };
 }
 
 function normalizeReading(raw: RawReading): Reading {
   const tanks = Array.isArray(raw.tanks) ? raw.tanks : [];
-  return { id: numberOrUndefined(raw.id), capturedAt: String(raw.capturedAt || raw.captured_at || new Date().toISOString()), source: String(raw.source || "ai"), confidence: nullableNumber(raw.confidence), totalLevelMm: nullableNumber(raw.totalLevelMm ?? raw.total_level_mm), totalLevelDiffMm: nullableNumber(raw.totalLevelDiffMm ?? raw.total_level_diff_mm), totalGsvM3: nullableNumber(raw.totalGsvM3 ?? raw.total_gsv_m3), totalGsvDiffM3: nullableNumber(raw.totalGsvDiffM3 ?? raw.total_gsv_diff_m3), verified: toBool(raw.verified, false), notes: stringOrUndefined(raw.notes) || "", tanks: TANKS.map((tank) => normalizeTank(tanks.find((item) => (item as TankReading).tank === tank) as RawTank | undefined, tank)) };
+  return {
+    id: numberOrUndefined(raw.id),
+    capturedAt: String(raw.capturedAt || raw.captured_at || new Date().toISOString()),
+    source: String(raw.source || "ai"),
+    confidence: nullableNumber(raw.confidence),
+    totalLevelMm: nullableNumber(raw.totalLevelMm ?? raw.total_level_mm),
+    totalLevelDiffMm: nullableNumber(raw.totalLevelDiffMm ?? raw.total_level_diff_mm),
+    totalGsvM3: nullableNumber(raw.totalGsvM3 ?? raw.total_gsv_m3),
+    totalGsvDiffM3: nullableNumber(raw.totalGsvDiffM3 ?? raw.total_gsv_diff_m3),
+    verified: toBool(raw.verified, false),
+    notes: stringOrUndefined(raw.notes) || "",
+    tanks: TANKS.map((tank) => normalizeTank(tanks.find((item) => (item as TankReading).tank === tank) as RawTank | undefined, tank)),
+  };
 }
 
 function normalizeTank(raw: RawTank | undefined, tank: TankName): TankReading {
-  return { id: numberOrUndefined(raw?.id), tank, levelMm: nullableNumber(raw?.levelMm ?? raw?.level_mm), temperatureC: nullableNumber(raw?.temperatureC ?? raw?.temperature_c), tovM3: nullableNumber(raw?.tovM3 ?? raw?.tov_m3), gsvM3: nullableNumber(raw?.gsvM3 ?? raw?.gsv_m3) };
+  return {
+    id: numberOrUndefined(raw?.id),
+    tank,
+    levelMm: nullableNumber(raw?.levelMm ?? raw?.level_mm),
+    temperatureC: nullableNumber(raw?.temperatureC ?? raw?.temperature_c),
+    tovM3: nullableNumber(raw?.tovM3 ?? raw?.tov_m3),
+    gsvM3: nullableNumber(raw?.gsvM3 ?? raw?.gsv_m3),
+  };
 }
 
 function normalizeRun(raw: RawRun): RefreshRun {
-  return { id: numberOrUndefined(raw.id), startedAt: String(raw.startedAt || raw.started_at || new Date().toISOString()), finishedAt: raw.finishedAt || raw.finished_at ? String(raw.finishedAt || raw.finished_at) : null, status: String(raw.status || "unknown"), errorCode: stringOrUndefined(raw.errorCode ?? raw.error_code) || null, message: stringOrUndefined(raw.message) || null, confidence: nullableNumber(raw.confidence), durationMs: nullableNumber(raw.durationMs ?? raw.duration_ms), readingId: nullableNumber(raw.readingId ?? raw.reading_id) };
+  return {
+    id: numberOrUndefined(raw.id),
+    startedAt: String(raw.startedAt || raw.started_at || new Date().toISOString()),
+    finishedAt: raw.finishedAt || raw.finished_at ? String(raw.finishedAt || raw.finished_at) : null,
+    status: String(raw.status || "unknown"),
+    errorCode: stringOrUndefined(raw.errorCode ?? raw.error_code) || null,
+    message: stringOrUndefined(raw.message) || null,
+    confidence: nullableNumber(raw.confidence),
+    durationMs: nullableNumber(raw.durationMs ?? raw.duration_ms),
+    readingId: nullableNumber(raw.readingId ?? raw.reading_id),
+  };
 }
 
 function readingToPayload(reading: Reading) {
   return { ...reading, tanks: reading.tanks.map(({ tank, levelMm, temperatureC, tovM3, gsvM3 }) => ({ tank, levelMm, temperatureC, tovM3, gsvM3 })) };
 }
 
-function settingsToPayload(settings: Settings) {
-  return { scheduleMode: settings.scheduleMode, customIntervalMinutes: settings.customIntervalMinutes, notifySuccess: settings.notifySuccess, notifyWarning: settings.notifyWarning, notifyFailure: settings.notifyFailure };
+function settingsToPayload(s: Settings) {
+  return { scheduleMode: s.scheduleMode, customIntervalMinutes: s.customIntervalMinutes, notifySuccess: s.notifySuccess, notifyWarning: s.notifyWarning, notifyFailure: s.notifyFailure };
 }
 
-function nullableNumber(value: unknown): number | null {
-  if (value === "" || value === undefined || value === null) return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
+// ============================================================
+// Helpers
+// ============================================================
+
+function nullableNumber(v: unknown): number | null {
+  if (v === "" || v === undefined || v === null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
-function numberOrUndefined(value: unknown): number | undefined {
-  const number = nullableNumber(value);
-  return number === null ? undefined : number;
+function numberOrUndefined(v: unknown): number | undefined {
+  const n = nullableNumber(v);
+  return n === null ? undefined : n;
 }
 
-function toBool(value: unknown, fallback: boolean) {
-  if (value === undefined || value === null) return fallback;
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value === 1;
-  return ["true", "1", "yes"].includes(String(value).toLowerCase());
+function toBool(v: unknown, fb: boolean): boolean {
+  if (v === undefined || v === null) return fb;
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v === 1;
+  return ["true", "1", "yes"].includes(String(v).toLowerCase());
 }
 
-function stringOrUndefined(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : undefined;
+function stringOrUndefined(v: unknown) {
+  return typeof v === "string" && v.trim() ? v : undefined;
 }
 
 function formatNumber(value: number | null | undefined, suffix = "") {
-  return value === null || value === undefined ? "-" : `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 }).format(value)}${suffix}`;
+  if (value === null || value === undefined) return "\u2014";
+  return `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 }).format(value)}${suffix}`;
 }
 
 function formatConfidence(value: number | null | undefined) {
-  return value === null || value === undefined ? "-" : `${Math.round(value * 100)}%`;
+  if (value === null || value === undefined) return "\u2014";
+  return `${Math.round(value * 100)}%`;
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-GB", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
 function formatShortDate(value: string) {
@@ -597,22 +849,17 @@ function formatShortDate(value: string) {
 }
 
 function formatDuration(value: number | null | undefined) {
-  return value === null || value === undefined ? "-" : `${Math.round(value / 100) / 10}s`;
+  if (value === null || value === undefined) return "\u2014";
+  return `${(Math.round(value) / 1000).toFixed(1)}s`;
 }
 
 function toDateTimeLocal(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 16);
-}
-
-function diffLabel(current: number | null | undefined, previous: number | null | undefined, suffix: string) {
-  const value = current ?? previous;
-  if (value === null || value === undefined) return undefined;
-  return `${value > 0 ? "+" : ""}${formatNumber(value, suffix)} from previous`;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 16);
 }
 
 function labelStatus(status: string) {
-  return status === "idle" ? "Ready" : status.replace("_", " ");
+  return status === "idle" ? "Ready" : status.replace(/_/g, " ");
 }
 
 function titleCase(value: string) {

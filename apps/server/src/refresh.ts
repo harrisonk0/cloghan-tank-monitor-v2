@@ -9,8 +9,19 @@ import type { AiExtraction, PendingReview, ReadingInput, RefreshErrorCode, TankN
 
 const pendingReviews = new Map<string, PendingReview>();
 
+/** Return ISO string in the local timezone (not UTC). */
+function localIsoNow(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const offset = -d.getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  const oh = pad(Math.floor(Math.abs(offset) / 60));
+  const om = pad(Math.abs(offset) % 60);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}${sign}${oh}:${om}`;
+}
+
 export async function runRefresh(): Promise<unknown> {
-  const startedAt = new Date().toISOString();
+  const startedAt = localIsoNow();
   let screenshotPaths: string[] = [];
   let runId: number | null = null;
 
@@ -36,14 +47,14 @@ export async function runRefresh(): Promise<unknown> {
       return refreshResponse("failed", validationError, extraction.message || "AI response failed validation.", extraction.confidence ?? null, null);
     }
 
-    if (extraction.status !== "success") {
+    if (extraction.status !== "success" && extraction.status !== "ok") {
       const errorCode = extraction.errorCode ?? "ERR_AI_INVALID_RESPONSE";
       finishRefreshRun({ id: runId, startedAt, status: "failed", errorCode, message: extraction.message, confidence: extraction.confidence, readingId: null, screenshotPaths });
       notify("failure", `Refresh failed - ${extraction.message}`);
       return refreshResponse("failed", errorCode, extraction.message, extraction.confidence, null);
     }
 
-    const reading = toReadingInput(extraction);
+    const reading = toReadingInput(extraction, startedAt);
     if (extraction.confidence < config.aiConfidenceThreshold) {
       const reviewId = randomUUID();
       pendingReviews.set(reviewId, { reviewId, runId, extraction, screenshotPaths, createdAt: startedAt });
@@ -72,7 +83,7 @@ export function confirmRefresh(body: unknown): unknown {
   const pending = pendingReviews.get(reviewId);
   if (!pending) throw new Error("Pending review was not found or has expired.");
 
-  const finalReading = reading ?? toReadingInput(pending.extraction, true);
+  const finalReading = reading ?? toReadingInput(pending.extraction, pending.createdAt, true);
   validateReadingInput(finalReading);
   const readingId = insertReading({ ...finalReading, source: finalReading.source ?? "ai_review", confidence: finalReading.confidence ?? pending.extraction.confidence, verified: true });
   pendingReviews.delete(reviewId);
@@ -135,7 +146,7 @@ async function callVisionApi(screenshotPaths: string[]): Promise<AiExtraction> {
         {
           role: "user",
           content: [
-            { type: "text", text: "Extract tank readings using the exact contract: {status,errorCode,message,confidence,reading:{capturedAt,tanks:[{tank,levelMm,temperatureC,tovM3,gsvM3}]},details}. If table missing use ERR_TABLE_NOT_FOUND; if incomplete use ERR_INCOMPLETE_TABLE." },
+            { type: "text", text: "Extract tank readings using the exact contract: {status,errorCode,message,confidence,reading:{tanks:[{tank,levelMm,temperatureC,tovM3,gsvM3}]},details}. Do NOT include capturedAt — the server sets it automatically. If table missing use ERR_TABLE_NOT_FOUND; if incomplete use ERR_INCOMPLETE_TABLE." },
             ...images.map((url) => ({ type: "image_url", image_url: { url } })),
           ],
         },
@@ -162,23 +173,23 @@ function parseStrictJson(content: string): AiExtraction {
 
 function validateExtraction(extraction: AiExtraction): RefreshErrorCode | null {
   if (!extraction || typeof extraction !== "object") return "ERR_AI_INVALID_RESPONSE";
-  if (extraction.status !== "success" && extraction.status !== "failed") return "ERR_AI_INVALID_RESPONSE";
+  if (extraction.status === "failed") return extraction.errorCode ?? "ERR_AI_INVALID_RESPONSE";
+  if (extraction.status !== "success" && extraction.status !== "ok") return "ERR_AI_INVALID_RESPONSE";
   if (typeof extraction.message !== "string") return "ERR_AI_INVALID_RESPONSE";
   if (typeof extraction.confidence !== "number" || extraction.confidence < 0 || extraction.confidence > 1) return "ERR_AI_INVALID_RESPONSE";
-  if (extraction.status === "failed") return extraction.errorCode ?? "ERR_AI_INVALID_RESPONSE";
   if (!extraction.reading) return "ERR_VALIDATION_FAILED";
   try {
-    validateReadingInput(toReadingInput(extraction));
+    validateReadingInput(toReadingInput(extraction, localIsoNow()));
     return null;
   } catch {
     return "ERR_VALIDATION_FAILED";
   }
 }
 
-function toReadingInput(extraction: AiExtraction, reviewed = false): ReadingInput {
+function toReadingInput(extraction: AiExtraction, fallbackCapturedAt: string, reviewed = false): ReadingInput {
   if (!extraction.reading) throw new Error("Extraction did not include a reading.");
   return {
-    capturedAt: extraction.reading.capturedAt,
+    capturedAt: fallbackCapturedAt,
     source: reviewed ? "ai_review" : "ai",
     confidence: extraction.confidence,
     verified: reviewed,

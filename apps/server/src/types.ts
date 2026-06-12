@@ -30,7 +30,7 @@ export type ReadingInput = {
 };
 
 export type AiExtraction = {
-  status: "success" | "failed";
+  status: "success" | "ok" | "failed";
   errorCode: RefreshErrorCode | null;
   message: string;
   confidence: number;
