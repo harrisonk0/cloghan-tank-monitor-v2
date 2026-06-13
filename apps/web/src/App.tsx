@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -9,13 +9,13 @@ import {
   YAxis,
 } from "recharts";
 
-const API_BASE = "http://localhost:3000/api";
 const TANKS = ["C1", "C2", "C3", "C4"] as const;
-const MAX_LEVEL = 22000; // approximate max mm for visual scaling
+const MAX_LEVEL = 22000;
 
 type Page = "dashboard" | "readings" | "settings" | "history";
 type RefreshStatus = "idle" | "running" | "success" | "warning" | "failed" | "needs_review";
 type ToastKind = "success" | "warning" | "error" | "info";
+type Permissions = "readonly" | "readwrite";
 
 type TankName = (typeof TANKS)[number];
 
@@ -139,10 +139,98 @@ const defaultSettings: Settings = {
 };
 
 // ============================================================
+// API Layer — dynamic server URL + auth
+// ============================================================
+
+function getServerUrl(): string {
+  return localStorage.getItem("serverUrl") ?? "";
+}
+
+function getApiKey(): string {
+  return localStorage.getItem("apiKey") ?? "";
+}
+
+function setServerConfig(url: string, key: string) {
+  localStorage.setItem("serverUrl", url.replace(/\/+$/, ""));
+  localStorage.setItem("apiKey", key);
+}
+
+function clearServerConfig() {
+  localStorage.removeItem("serverUrl");
+  localStorage.removeItem("apiKey");
+}
+
+async function testConnection(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${url.replace(/\/+$/, "")}/api/health`, { method: "GET" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function loginRequest(url: string, key: string): Promise<{ ok: boolean; permissions?: Permissions; error?: string }> {
+  try {
+    const res = await fetch(`${url.replace(/\/+$/, "")}/api/auth`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+      credentials: "include",
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error };
+    return { ok: true, permissions: data.permissions };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Connection failed" };
+  }
+}
+
+async function checkSession(url: string): Promise<{ authenticated: boolean; permissions?: Permissions }> {
+  try {
+    const res = await fetch(`${url}/api/auth`, { credentials: "include" });
+    return await res.json();
+  } catch {
+    return { authenticated: false };
+  }
+}
+
+async function logoutRequest(url: string) {
+  try {
+    await fetch(`${url}/api/auth`, { method: "DELETE", credentials: "include" });
+  } catch { /* ignore */ }
+  clearServerConfig();
+}
+
+async function apiGet(path: string) {
+  return apiRequest(path, { method: "GET" });
+}
+
+async function apiRequest(path: string, init: RequestInit) {
+  const baseUrl = getServerUrl();
+  const apiKey = getApiKey();
+  const hasBody = init.body !== undefined && init.body !== null;
+  const headers: Record<string, string> = {
+    ...(hasBody ? { "Content-Type": "application/json" } : {}),
+    ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
+  };
+  const response = await fetch(`${baseUrl}/api${path}`, {
+    ...init,
+    headers: { ...headers, ...((init.headers as Record<string, string>) ?? {}) },
+    credentials: "include",
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(data?.message || data?.error || response.statusText);
+  return data;
+}
+
+// ============================================================
 // App
 // ============================================================
 
 function App() {
+  const [serverUrl, setServerUrl] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<Permissions | null>(null);
   const [page, setPage] = useState<Page>("dashboard");
   const [readings, setReadings] = useState<Reading[]>([]);
   const [runs, setRuns] = useState<RefreshRun[]>([]);
@@ -153,10 +241,50 @@ function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [editing, setEditing] = useState<Reading | null>(null);
   const [review, setReview] = useState<RefreshResult | null>(null);
+  const [connectionOk, setConnectionOk] = useState(true);
 
-  useEffect(() => { void loadAll(); }, []);
+  const isReadOnly = permissions === "readonly";
 
-  async function loadAll() {
+  // Check session on mount
+  useEffect(() => {
+    const url = localStorage.getItem("serverUrl");
+    const key = localStorage.getItem("apiKey");
+    if (url && key) {
+      checkSession(url).then((s) => {
+        if (s.authenticated) {
+          setServerUrl(url);
+          setPermissions(s.permissions ?? "readonly");
+        } else {
+          // Session expired, try direct API key
+          loginRequest(url, key).then((r) => {
+            if (r.ok && r.permissions) {
+              setServerUrl(url);
+              setPermissions(r.permissions);
+            }
+          });
+        }
+      });
+    }
+  }, []);
+
+  // Load data when authenticated
+  useEffect(() => {
+    if (serverUrl && permissions) {
+      void loadAll();
+    }
+  }, [serverUrl, permissions]);
+
+  // Connection heartbeat
+  useEffect(() => {
+    if (!serverUrl) return;
+    const interval = setInterval(async () => {
+      const ok = await testConnection(serverUrl);
+      setConnectionOk(ok);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [serverUrl]);
+
+  const loadAll = useCallback(async () => {
     setLoading(true);
     try {
       const [readingsData, runsData, settingsData] = await Promise.all([
@@ -172,7 +300,16 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  // Poll for new data every 30 seconds (other clients may have triggered refresh)
+  useEffect(() => {
+    if (!serverUrl || !permissions) return;
+    const interval = setInterval(() => {
+      void loadAll();
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [serverUrl, permissions, loadAll]);
 
   async function refreshData() {
     setRefreshStatus("running");
@@ -255,6 +392,12 @@ function App() {
     }
   }
 
+  function handleLogout() {
+    if (serverUrl) void logoutRequest(serverUrl);
+    setServerUrl(null);
+    setPermissions(null);
+  }
+
   function pushToast(kind: ToastKind, message: string) {
     const id = Date.now() + Math.random();
     setToasts((items) => [...items, { id, kind, message }]);
@@ -273,6 +416,12 @@ function App() {
     }
   }
 
+  // ── Login screen ──────────────────────────────────────────────────────────
+
+  if (!serverUrl || !permissions) {
+    return <LoginScreen onLogin={(url, perm) => { setServerUrl(url); setPermissions(perm); }} />;
+  }
+
   const latest = readings[0];
   const previous = readings[1];
   const progress = refreshStatus === "running" ? 66 : refreshStatus === "idle" ? 0 : 100;
@@ -286,15 +435,20 @@ function App() {
         refreshStatus={refreshStatus}
         refreshMessage={refreshMessage}
         progress={progress}
+        isReadOnly={isReadOnly}
+        connectionOk={connectionOk}
+        onLogout={handleLogout}
       />
       <main className="container">
         {loading && <Panel>Loading\u2026</Panel>}
         {!loading && page === "dashboard" && <Dashboard readings={readings} latest={latest} previous={previous} runs={runs} />}
-        {!loading && page === "readings" && <ReadingsPage readings={readings} onAdd={() => setEditing(emptyReading())} onEdit={setEditing} onDelete={deleteReading} />}
-        {!loading && page === "settings" && <SettingsPage settings={settings} onSave={saveSettings} />}
+        {!loading && page === "readings" && <ReadingsPage readings={readings} isReadOnly={isReadOnly} onAdd={() => setEditing(emptyReading())} onEdit={setEditing} onDelete={deleteReading} />}
+        {!loading && page === "settings" && <SettingsPage settings={settings} isReadOnly={isReadOnly} onSave={saveSettings} />}
         {!loading && page === "history" && <HistoryPage runs={runs} />}
       </main>
-      {editing && <ReadingModal title={editing.id ? "Edit reading" : "Add reading"} initial={editing} onSave={saveReading} onClose={() => setEditing(null)} />}
+      {editing && !isReadOnly && (
+        <ReadingModal title={editing.id ? "Edit reading" : "Add reading"} initial={editing} onSave={saveReading} onClose={() => setEditing(null)} />
+      )}
       {review?.reading && (
         <ReadingModal
           title="Review extraction"
@@ -314,6 +468,108 @@ function App() {
 }
 
 // ============================================================
+// Login Screen
+// ============================================================
+
+function LoginScreen({ onLogin }: { onLogin: (url: string, permissions: Permissions) => void }) {
+  const [serverUrl, setServerUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState<"url" | "key">("url");
+  const [reachable, setReachable] = useState(false);
+
+  async function handleTestUrl() {
+    setLoading(true);
+    setError("");
+    const url = serverUrl.replace(/\/+$/, "");
+    const ok = await testConnection(url);
+    setReachable(ok);
+    setLoading(false);
+    if (ok) {
+      setStep("key");
+    } else {
+      setError("Cannot reach server. Check the URL and ensure the server is running.");
+    }
+  }
+
+  async function handleConnect() {
+    setLoading(true);
+    setError("");
+    const url = serverUrl.replace(/\/+$/, "");
+    const result = await loginRequest(url, apiKey);
+    setLoading(false);
+    if (result.ok && result.permissions) {
+      setServerConfig(url, apiKey);
+      onLogin(url, result.permissions);
+    } else {
+      setError(result.error || "Invalid API key.");
+    }
+  }
+
+  return (
+    <div className="login-screen">
+      <div className="login-card">
+        <div className="login-header">
+          <span className="eyebrow">Cloghan Terminal</span>
+          <h1>Tank Monitor</h1>
+          <p className="login-subtitle">Connect to your server</p>
+        </div>
+
+        {step === "url" ? (
+          <>
+            <div className="login-field">
+              <label>Server URL</label>
+              <input
+                value={serverUrl}
+                onChange={(e) => setServerUrl(e.target.value)}
+                placeholder="https://xxxx.ngrok-free.app"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === "Enter" && serverUrl) handleTestUrl(); }}
+              />
+            </div>
+            {error && <div className="login-error">{error}</div>}
+            <button className="primary login-btn" onClick={handleTestUrl} disabled={!serverUrl || loading}>
+              {loading ? "Testing\u2026" : "Test Connection"}
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="login-field">
+              <label>Server URL</label>
+              <div className="login-url-confirmed">{serverUrl} <span className="login-ok">Reachable</span></div>
+            </div>
+            <div className="login-field">
+              <label>API Key</label>
+              <input
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="ctm_live_..."
+                type="password"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === "Enter" && apiKey) handleConnect(); }}
+              />
+            </div>
+            {error && <div className="login-error">{error}</div>}
+            <div className="login-actions">
+              <button onClick={() => { setStep("url"); setError(""); }}>Back</button>
+              <button className="primary" onClick={handleConnect} disabled={!apiKey || loading}>
+                {loading ? "Connecting\u2026" : "Connect"}
+              </button>
+            </div>
+          </>
+        )}
+
+        <div className="login-help">
+          <p>Generate an API key from the server tray menu:</p>
+          <p className="login-help-cmd">Right-click tray icon &rarr; Generate Read/Write API Key</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // Header
 // ============================================================
 
@@ -324,6 +580,9 @@ function Header(props: {
   refreshStatus: RefreshStatus;
   refreshMessage: string;
   progress: number;
+  isReadOnly: boolean;
+  connectionOk: boolean;
+  onLogout: () => void;
 }) {
   return (
     <header className="site-header">
@@ -332,9 +591,16 @@ function Header(props: {
           <span className="eyebrow">Cloghan Terminal</span>
           <h1>Tank Monitor</h1>
         </div>
-        <button className="primary" onClick={props.refreshData} disabled={props.refreshStatus === "running"}>
-          {props.refreshStatus === "running" ? "Extracting\u2026" : "Refresh"}
-        </button>
+        <div className="header-actions">
+          <span className={`connection-dot ${props.connectionOk ? "connected" : "disconnected"}`} title={props.connectionOk ? "Connected" : "Disconnected"} />
+          {props.isReadOnly && <span className="readonly-badge">Read Only</span>}
+          {!props.isReadOnly && (
+            <button className="primary" onClick={props.refreshData} disabled={props.refreshStatus === "running"}>
+              {props.refreshStatus === "running" ? "Extracting\u2026" : "Refresh"}
+            </button>
+          )}
+          <button className="logout-btn" onClick={props.onLogout} title="Logout">{"\u2190"}</button>
+        </div>
       </div>
       <div className="status-row">
         <span className={`status-pill ${props.refreshStatus}`}>{labelStatus(props.refreshStatus)}</span>
@@ -377,10 +643,8 @@ function Dashboard({ readings, latest, previous, runs }: { readings: Reading[]; 
 
   return (
     <div className="page-grid">
-      {/* Tank visualisations — the signature element */}
       <TankVisualisations latest={latest} previous={previous} />
 
-      {/* Hero metrics */}
       <section className="panel hero-panel">
         <div className="hero-metrics">
           <div className="hero-metric">
@@ -415,7 +679,6 @@ function Dashboard({ readings, latest, previous, runs }: { readings: Reading[]; 
         </div>
       </section>
 
-      {/* Charts */}
       <ChartPanel title="Level trend" data={chartData} dataKey="level" stroke="var(--accent-cyan)" suffix=" mm" />
       <ChartPanel title="GSV trend" data={chartData} dataKey="gsv" stroke="var(--accent-green)" suffix=" m\u00B3" />
     </div>
@@ -423,7 +686,7 @@ function Dashboard({ readings, latest, previous, runs }: { readings: Reading[]; 
 }
 
 // ============================================================
-// Tank Visualisations (signature element)
+// Tank Visualisations
 // ============================================================
 
 function TankVisualisations({ latest, previous }: { latest: Reading; previous?: Reading }) {
@@ -519,12 +782,15 @@ function ChartPanel({ title, data, dataKey, stroke, suffix }: { title: string; d
 // Readings Page
 // ============================================================
 
-function ReadingsPage({ readings, onAdd, onEdit, onDelete }: { readings: Reading[]; onAdd: () => void; onEdit: (reading: Reading) => void; onDelete: (id?: number) => void }) {
+function ReadingsPage({ readings, isReadOnly, onAdd, onEdit, onDelete }: { readings: Reading[]; isReadOnly: boolean; onAdd: () => void; onEdit: (reading: Reading) => void; onDelete: (id?: number) => void }) {
   const [expanded, setExpanded] = useState<number | null>(null);
 
   return (
     <section className="panel full-width">
-      <div className="section-header"><h2>Readings</h2><button className="primary" onClick={onAdd}>Add reading</button></div>
+      <div className="section-header">
+        <h2>Readings</h2>
+        {!isReadOnly && <button className="primary" onClick={onAdd}>Add reading</button>}
+      </div>
       <div className="readings-list">
         {!readings.length && <p className="empty-text">No readings yet.</p>}
         {readings.map((r, i) => (
@@ -533,6 +799,7 @@ function ReadingsPage({ readings, onAdd, onEdit, onDelete }: { readings: Reading
             reading={r}
             previous={readings[i + 1]}
             isExpanded={expanded === r.id}
+            isReadOnly={isReadOnly}
             onToggle={() => setExpanded(expanded === r.id ? null : r.id ?? null)}
             onEdit={onEdit}
             onDelete={onDelete}
@@ -543,7 +810,7 @@ function ReadingsPage({ readings, onAdd, onEdit, onDelete }: { readings: Reading
   );
 }
 
-function ReadingCard({ reading, previous, isExpanded, onToggle, onEdit, onDelete }: { reading: Reading; previous?: Reading; isExpanded: boolean; onToggle: () => void; onEdit: (r: Reading) => void; onDelete: (id?: number) => void }) {
+function ReadingCard({ reading, previous, isExpanded, isReadOnly, onToggle, onEdit, onDelete }: { reading: Reading; previous?: Reading; isExpanded: boolean; isReadOnly: boolean; onToggle: () => void; onEdit: (r: Reading) => void; onDelete: (id?: number) => void }) {
   const byTank = Object.fromEntries(reading.tanks.map((t) => [t.tank, t]));
   const prevByTank = previous ? Object.fromEntries(previous.tanks.map((t) => [t.tank, t])) : {};
   return (
@@ -597,10 +864,12 @@ function ReadingCard({ reading, previous, isExpanded, onToggle, onEdit, onDelete
             </tfoot>
           </table>
           {reading.notes && <p className="reading-notes">{reading.notes}</p>}
-          <div className="reading-card-actions">
-            <button onClick={() => onEdit(reading)}>Edit</button>
-            <button className="danger" onClick={() => onDelete(reading.id)}>Delete</button>
-          </div>
+          {!isReadOnly && (
+            <div className="reading-card-actions">
+              <button onClick={() => onEdit(reading)}>Edit</button>
+              <button className="danger" onClick={() => onDelete(reading.id)}>Delete</button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -611,15 +880,18 @@ function ReadingCard({ reading, previous, isExpanded, onToggle, onEdit, onDelete
 // Settings Page
 // ============================================================
 
-function SettingsPage({ settings, onSave }: { settings: Settings; onSave: (s: Settings) => void }) {
+function SettingsPage({ settings, isReadOnly, onSave }: { settings: Settings; isReadOnly: boolean; onSave: (s: Settings) => void }) {
   const [draft, setDraft] = useState(settings);
   useEffect(() => setDraft(settings), [settings]);
   return (
     <section className="panel settings-panel">
-      <div className="section-header"><h2>Settings</h2><button className="primary" onClick={() => onSave(draft)}>Save</button></div>
+      <div className="section-header">
+        <h2>Settings</h2>
+        {!isReadOnly && <button className="primary" onClick={() => onSave(draft)}>Save</button>}
+      </div>
       <label>
         Refresh schedule
-        <select value={draft.scheduleMode} onChange={(e) => setDraft({ ...draft, scheduleMode: e.target.value as Settings["scheduleMode"] })}>
+        <select value={draft.scheduleMode} onChange={(e) => setDraft({ ...draft, scheduleMode: e.target.value as Settings["scheduleMode"] })} disabled={isReadOnly}>
           <option value="manual">Manual only</option>
           <option value="10m">Every 10 minutes</option>
           <option value="30m">Every 30 minutes</option>
@@ -629,12 +901,12 @@ function SettingsPage({ settings, onSave }: { settings: Settings; onSave: (s: Se
       </label>
       <label>
         Custom interval (minutes)
-        <input type="number" min="1" value={draft.customIntervalMinutes} onChange={(e) => setDraft({ ...draft, customIntervalMinutes: Number(e.target.value) })} disabled={draft.scheduleMode !== "custom"} />
+        <input type="number" min="1" value={draft.customIntervalMinutes} onChange={(e) => setDraft({ ...draft, customIntervalMinutes: Number(e.target.value) })} disabled={draft.scheduleMode !== "custom" || isReadOnly} />
       </label>
       <div className="check-grid">
-        <label><input type="checkbox" checked={draft.notifySuccess} onChange={(e) => setDraft({ ...draft, notifySuccess: e.target.checked })} /> On success</label>
-        <label><input type="checkbox" checked={draft.notifyWarning} onChange={(e) => setDraft({ ...draft, notifyWarning: e.target.checked })} /> On warning</label>
-        <label><input type="checkbox" checked={draft.notifyFailure} onChange={(e) => setDraft({ ...draft, notifyFailure: e.target.checked })} /> On failure</label>
+        <label><input type="checkbox" checked={draft.notifySuccess} onChange={(e) => setDraft({ ...draft, notifySuccess: e.target.checked })} disabled={isReadOnly} /> On success</label>
+        <label><input type="checkbox" checked={draft.notifyWarning} onChange={(e) => setDraft({ ...draft, notifyWarning: e.target.checked })} disabled={isReadOnly} /> On warning</label>
+        <label><input type="checkbox" checked={draft.notifyFailure} onChange={(e) => setDraft({ ...draft, notifyFailure: e.target.checked })} disabled={isReadOnly} /> On failure</label>
       </div>
       <div className="readonly-grid">
         <div><span>Screenshots</span><strong>{draft.screenshotRetentionHours ?? 3}h retention</strong></div>
@@ -741,24 +1013,6 @@ function ReadingModal({ title, initial, confirmLabel = "Save", onSave, onClose }
 
 function Panel({ children }: { children: React.ReactNode }) {
   return <div className="panel full-width">{children}</div>;
-}
-
-// ============================================================
-// API layer
-// ============================================================
-
-async function apiGet(path: string) {
-  return apiRequest(path, { method: "GET" });
-}
-
-async function apiRequest(path: string, init: RequestInit) {
-  const hasBody = init.body !== undefined && init.body !== null;
-  const headers: Record<string, string> = hasBody ? { "Content-Type": "application/json" } : {};
-  const response = await fetch(`${API_BASE}${path}`, { headers, ...init });
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(data?.message || data?.error || response.statusText);
-  return data;
 }
 
 // ============================================================
