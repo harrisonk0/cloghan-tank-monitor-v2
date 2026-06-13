@@ -204,10 +204,28 @@ function normalizeIncomingSettings(settings: Record<string, unknown>): Record<st
 
 // ─── Start ───────────────────────────────────────────────────────────────────
 
-try {
-  configureScheduler();
-  await app.listen({ port: config.port, host: "127.0.0.1" });
-} catch (error) {
-  app.log.error(error);
-  process.exit(1);
+let serverRunning = false;
+
+export function startServer(): void {
+  if (serverRunning) return;
+  try {
+    configureScheduler();
+    app.listen({ port: config.port, host: "127.0.0.1" }).then(() => {
+      serverRunning = true;
+      console.log(`[server] Listening on http://127.0.0.1:${config.port}`);
+    });
+  } catch (error) {
+    app.log.error(error);
+    process.exit(1);
+  }
+}
+
+export function getServerStatus(): { running: boolean; port: number } {
+  return { running: serverRunning, port: config.port };
+}
+
+// Auto-start only when run directly (not imported by tray)
+const isMainModule = process.argv[1]?.endsWith("index.ts") || process.argv[1]?.endsWith("index.js");
+if (isMainModule) {
+  startServer();
 }
