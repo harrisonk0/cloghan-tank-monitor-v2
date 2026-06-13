@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import { paths } from "./config.js";
-import type { ReadingInput, TankName, TankReadingInput } from "./types.js";
+import type { ApiKey, ApiKeyPermissions, ReadingInput, TankName, TankReadingInput } from "./types.js";
 
 function localIsoNow(): string {
   const d = new Date();
@@ -100,6 +101,15 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_readings_captured_at ON readings(captured_at);
     CREATE INDEX IF NOT EXISTS idx_tank_readings_reading_id ON tank_readings(reading_id);
     CREATE INDEX IF NOT EXISTS idx_refresh_runs_started_at ON refresh_runs(started_at);
+
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT NOT NULL UNIQUE,
+      label TEXT,
+      permissions TEXT NOT NULL CHECK(permissions IN ('readonly', 'readwrite')),
+      created_at TEXT NOT NULL,
+      revoked_at TEXT
+    );
   `);
 }
 
@@ -320,4 +330,25 @@ export function listExpiredSuccessfulScreenshotPaths(cutoffIso: string): string[
       return [];
     }
   });
+}
+
+// ─── API Keys ────────────────────────────────────────────────────────────────
+
+export function generateApiKey(label: string, permissions: ApiKeyPermissions): string {
+  const key = `ctm_live_${crypto.randomBytes(16).toString("hex")}`;
+  db.prepare("INSERT INTO api_keys (key, label, permissions, created_at) VALUES (?, ?, ?, ?)").run(key, label, permissions, localIsoNow());
+  return key;
+}
+
+export function validateApiKey(key: string): ApiKey | null {
+  return (db.prepare("SELECT * FROM api_keys WHERE key = ? AND revoked_at IS NULL").get(key) as ApiKey | null) ?? null;
+}
+
+export function listApiKeys(): Omit<ApiKey, "key">[] {
+  return db.prepare("SELECT id, label, permissions, created_at, revoked_at FROM api_keys WHERE revoked_at IS NULL ORDER BY created_at DESC").all() as Omit<ApiKey, "key">[];
+}
+
+export function revokeApiKey(id: number): boolean {
+  const result = db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(localIsoNow(), id);
+  return result.changes > 0;
 }

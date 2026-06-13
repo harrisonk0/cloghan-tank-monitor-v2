@@ -48,3 +48,14 @@ export type PendingReview = {
   screenshotPaths: string[];
   createdAt: string;
 };
+
+export type ApiKeyPermissions = "readonly" | "readwrite";
+
+export type ApiKey = {
+  id: number;
+  key: string;
+  label: string | null;
+  permissions: ApiKeyPermissions;
+  created_at: string;
+  revoked_at: string | null;
+};

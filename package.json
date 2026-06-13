@@ -18,6 +18,7 @@
     "@vitejs/plugin-react": "latest",
     "better-sqlite3": "latest",
     "concurrently": "latest",
+    "cookie": "^1.1.1",
     "dotenv": "latest",
     "fastify": "latest",
     "node-notifier": "latest",
@@ -31,6 +32,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "latest",
+    "@types/cookie": "^0.6.0",
     "@types/node": "latest",
     "@types/node-notifier": "latest",
     "@types/react": "latest",
