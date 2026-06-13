@@ -50,14 +50,14 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
 
 /**
  * Requires read-write permissions.
- * Must be used after authenticate.
+ * Also authenticates — no need to chain with authenticate.
  */
 export async function requireReadWrite(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  if (!request.apiKey) {
-    reply.code(401).send({ error: "Authentication required" });
-    return;
-  }
-  if (request.apiKey.permissions !== "readwrite") {
+  // First authenticate
+  await authenticate(request, reply);
+  if (reply.sent) return;
+
+  if (request.apiKey?.permissions !== "readwrite") {
     reply.code(403).send({ error: "Read-write access required" });
   }
 }

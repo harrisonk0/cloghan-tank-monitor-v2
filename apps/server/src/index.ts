@@ -34,6 +34,11 @@ await app.register(cors, {
   allowedHeaders: ["Content-Type", "Authorization"],
 });
 
+// Allow empty/missing Content-Type on POST (e.g. /api/refresh with no body)
+app.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
+  done(null, body);
+});
+
 // ─── Public routes (no auth) ────────────────────────────────────────────────
 
 app.get("/api/health", async () => ({
