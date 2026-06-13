@@ -17,9 +17,28 @@ const ICON_PATH = path.resolve(import.meta.dirname ?? ".", "tray-icon.png");
 // ─── Ngrok ───────────────────────────────────────────────────────────────────
 
 function startNgrok(): void {
-  ngrokProcess = spawn("ngrok", ["http", "3000"], {
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
+  // Ensure ngrok is findable even in background-job contexts
+  const winGetNgrok = "C:\\Users\\alankerr\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe";
+  const extraPath = process.platform === "win32" ? `;${winGetNgrok}` : "";
+
+  try {
+    ngrokProcess = spawn("ngrok", ["http", "3000"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      env: { ...process.env, PATH: (process.env.PATH ?? "") + extraPath },
+    });
+  } catch (error) {
+    console.warn("[ngrok] Failed to start:", error instanceof Error ? error.message : error);
+    ngrokUrl = null;
+    updateTrayMenu();
+    return;
+  }
+
+  ngrokProcess.on("error", (error) => {
+    console.warn("[ngrok] Process error:", error.message);
+    ngrokUrl = null;
+    ngrokProcess = null;
+    updateTrayMenu();
   });
 
   ngrokProcess.stdout?.on("data", (data: Buffer) => {
