@@ -22,7 +22,7 @@ function startNgrok(): void {
   const extraPath = process.platform === "win32" ? `;${winGetNgrok}` : "";
 
   try {
-    ngrokProcess = spawn("ngrok", ["http", "3000"], {
+    ngrokProcess = spawn("ngrok", ["http", "3000", "--inspect=false"], {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       env: { ...process.env, PATH: (process.env.PATH ?? "") + extraPath },
