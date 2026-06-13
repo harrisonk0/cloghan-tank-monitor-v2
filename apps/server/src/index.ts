@@ -23,12 +23,17 @@ import { configureScheduler, getSchedulerStatus } from "./scheduler.js";
 const app = Fastify({ logger: true });
 
 await app.register(cors, {
-  origin: [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5173",
-    "https://cloghan-tanks.vercel.app",
-  ],
+  origin: (origin, cb) => {
+    // Allow requests with no origin (curl, server-to-server, etc.)
+    if (!origin) return cb(null, true);
+    // Allow ngrok tunnels
+    if (/\.ngrok(-free)?\.(dev|app)$/.test(new URL(origin).hostname)) return cb(null, true);
+    // Allow Vercel deployments
+    if (/\.vercel\.app$/.test(new URL(origin).hostname)) return cb(null, true);
+    // Allow localhost (dev)
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true);
+    cb(null, false);
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
