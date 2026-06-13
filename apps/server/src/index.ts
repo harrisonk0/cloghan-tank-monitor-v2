@@ -36,7 +36,7 @@ await app.register(cors, {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"],
 });
 
 // Allow empty/missing Content-Type on POST (e.g. /api/refresh with no body)

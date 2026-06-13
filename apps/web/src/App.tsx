@@ -162,7 +162,10 @@ function clearServerConfig() {
 
 async function testConnection(url: string): Promise<boolean> {
   try {
-    const res = await fetch(`${url.replace(/\/+$/, "")}/api/health`, { method: "GET" });
+    const res = await fetch(`${url.replace(/\/+$/, "")}/api/health`, {
+      method: "GET",
+      headers: { "ngrok-skip-browser-warning": "true" },
+    });
     return res.ok;
   } catch {
     return false;
@@ -173,7 +176,7 @@ async function loginRequest(url: string, key: string): Promise<{ ok: boolean; pe
   try {
     const res = await fetch(`${url.replace(/\/+$/, "")}/api/auth`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
       body: JSON.stringify({ key }),
       credentials: "include",
     });
@@ -187,7 +190,10 @@ async function loginRequest(url: string, key: string): Promise<{ ok: boolean; pe
 
 async function checkSession(url: string): Promise<{ authenticated: boolean; permissions?: Permissions }> {
   try {
-    const res = await fetch(`${url}/api/auth`, { credentials: "include" });
+    const res = await fetch(`${url}/api/auth`, {
+      credentials: "include",
+      headers: { "ngrok-skip-browser-warning": "true" },
+    });
     return await res.json();
   } catch {
     return { authenticated: false };
@@ -196,7 +202,11 @@ async function checkSession(url: string): Promise<{ authenticated: boolean; perm
 
 async function logoutRequest(url: string) {
   try {
-    await fetch(`${url}/api/auth`, { method: "DELETE", credentials: "include" });
+    await fetch(`${url}/api/auth`, {
+      method: "DELETE",
+      credentials: "include",
+      headers: { "ngrok-skip-browser-warning": "true" },
+    });
   } catch { /* ignore */ }
   clearServerConfig();
 }
@@ -210,6 +220,7 @@ async function apiRequest(path: string, init: RequestInit) {
   const apiKey = getApiKey();
   const hasBody = init.body !== undefined && init.body !== null;
   const headers: Record<string, string> = {
+    "ngrok-skip-browser-warning": "true",
     ...(hasBody ? { "Content-Type": "application/json" } : {}),
     ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
   };
