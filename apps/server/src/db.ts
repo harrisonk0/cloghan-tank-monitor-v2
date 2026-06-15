@@ -186,6 +186,8 @@ export function updateReading(id: number, input: ReadingInput): boolean {
 
 export function deleteReading(id: number): boolean {
   const transaction = db.transaction(() => {
+    // Nullify refresh_runs references before deleting the reading
+    db.prepare("UPDATE refresh_runs SET reading_id = NULL WHERE reading_id = ?").run(id);
     const result = db.prepare("DELETE FROM readings WHERE id = ?").run(id);
     if (result.changes > 0) recomputeReadingDiffs();
     return result.changes > 0;
