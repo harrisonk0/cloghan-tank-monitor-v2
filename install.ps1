@@ -1,11 +1,11 @@
 # Cloghan Tank Monitor v2 - Windows Installer
 # Run from GitHub:
-#   irm https://raw.githubusercontent.com/YOUR_USERNAME/cloghan-tank-monitor-v2/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/harrisonk0/cloghan-tank-monitor-v2/main/install.ps1 | iex
 #
 # Or download the repo and run Install.bat
 
 $ErrorActionPreference = "Stop"
-$RepoUrl = "https://github.com/YOUR_USERNAME/cloghan-tank-monitor-v2.git"
+$RepoUrl = "https://github.com/harrisonk0/cloghan-tank-monitor-v2.git"
 $InstallDir = Join-Path $env:USERPROFILE "CloghanTankMonitor"
 
 Write-Host ""
