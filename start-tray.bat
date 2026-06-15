@@ -1,3 +1,3 @@
 @echo off
-cd /d C:\Users\alankerr\Desktop\cloghan-tank-monitor-v2
+cd /d "%~dp0"
 npx tsx apps/server/src/tray-entry.ts

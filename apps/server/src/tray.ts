@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import Tray from "trayicon";
@@ -17,15 +17,22 @@ const ICON_PATH = path.resolve(import.meta.dirname ?? ".", "tray-icon.png");
 // ─── Ngrok ───────────────────────────────────────────────────────────────────
 
 function startNgrok(): void {
-  // Ensure ngrok is findable even in background-job contexts
-  const winGetNgrok = "C:\\Users\\alankerr\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Ngrok.Ngrok_Microsoft.Winget.Source_8wekyb3d8bbwe";
-  const extraPath = process.platform === "win32" ? `;${winGetNgrok}` : "";
+  // Check ngrok version first
+  try {
+    const versionCheck = spawnSync("ngrok", ["--version"], { encoding: "utf-8", windowsHide: true });
+    if (versionCheck.stdout) {
+      const versionLine = versionCheck.stdout.trim().split("\n")[0];
+      console.log("[ngrok] " + versionLine);
+    }
+  } catch {
+    // Ignore version check errors
+  }
 
   try {
     ngrokProcess = spawn("ngrok", ["http", "3000", "--inspect=false"], {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-      env: { ...process.env, PATH: (process.env.PATH ?? "") + extraPath },
+      env: process.env,
     });
   } catch (error) {
     console.warn("[ngrok] Failed to start:", error instanceof Error ? error.message : error);
@@ -53,8 +60,14 @@ function startNgrok(): void {
   });
 
   ngrokProcess.stderr?.on("data", (data: Buffer) => {
-    // ngrok logs to stderr too, check for URL there
-    const text = data.toString();
+    const text = data.toString().trim();
+    // Log stderr output for debugging (ngrok sends errors here)
+    if (text) {
+      for (const line of text.split("\n")) {
+        if (line.trim()) console.log(`[ngrok:err] ${line.trim()}`);
+      }
+    }
+    // Also check for URL in stderr (ngrok sometimes logs there)
     const match = text.match(/https:\/\/[a-z0-9-]+\.ngrok(?:-free)?\.app/);
     if (match) {
       ngrokUrl = match[0];

@@ -18,7 +18,7 @@ const API_BASE = process.env.AI_BASE_URL || "https://api.openai.com/v1";
 const API_KEY = process.env.AI_API_KEY || "";
 const MODEL = process.env.AI_MODEL || "gpt-4o-mini";
 
-const SCREENSHOT = process.argv[2] || path.resolve("C:/Users/alankerr/Desktop/screen_capture.png");
+const SCREENSHOT = process.argv[2] || path.resolve("runtime/screenshots/sample.png");
 
 console.log("=== AI Refresh Test ===");
 console.log(`Base URL:  ${API_BASE}`);

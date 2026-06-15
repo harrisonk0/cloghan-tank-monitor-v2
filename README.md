@@ -9,7 +9,7 @@ See `docs/product-spec.md` for the full specification.
 Open PowerShell and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/YOUR_USERNAME/cloghan-tank-monitor-v2/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/harrisonk0/cloghan-tank-monitor-v2/main/install.ps1 | iex
 ```
 
 This downloads and runs the installer, which:
