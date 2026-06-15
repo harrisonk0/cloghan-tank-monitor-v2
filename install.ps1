@@ -209,8 +209,38 @@ Write-Host "  To start the app:" -ForegroundColor White
 Write-Host "    - Double-click 'Cloghan Tank Monitor' on your Desktop" -ForegroundColor White
 Write-Host "    - Or restart your computer (it auto-starts)" -ForegroundColor White
 Write-Host ""
-Write-Host "  The web dashboard will be at http://localhost:5173" -ForegroundColor White
-Write-Host "  Remote access via ngrok tunnel (URL shown in tray)" -ForegroundColor White
+Write-Host "  Local dashboard: http://localhost:5173" -ForegroundColor White
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  Pair with the Vercel Dashboard" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  The web dashboard is also hosted at:" -ForegroundColor White
+Write-Host "    https://cloghan-tm.vercel.app" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  To connect it to this PC:" -ForegroundColor White
+Write-Host ""
+Write-Host "  1. Start the app (double-click the desktop shortcut)" -ForegroundColor White
+Write-Host "     The tray icon appears in your system tray (bottom-right)" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  2. Right-click the tray icon and select 'Copy Tunnel URL'" -ForegroundColor White
+Write-Host "     This copies the ngrok URL (e.g. https://xxxx.ngrok-free.app)" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  3. Right-click the tray icon again and select" -ForegroundColor White
+Write-Host "     'Generate Read/Write API Key'" -ForegroundColor White
+Write-Host "     The key is copied to your clipboard automatically" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  4. Open https://cloghan-tm.vercel.app in your browser" -ForegroundColor White
+Write-Host ""
+Write-Host "  5. Paste the Tunnel URL when prompted for 'Server URL'" -ForegroundColor White
+Write-Host "     Click 'Test Connection' to verify" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  6. Paste the API Key when prompted" -ForegroundColor White
+Write-Host "     Click 'Connect' to access the dashboard" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  You only need to do this once - the dashboard remembers" -ForegroundColor White
+Write-Host "  your connection. Generate new keys from the tray menu" -ForegroundColor White
+Write-Host "  anytime you want to connect from another device." -ForegroundColor White
 Write-Host ""
 
 Read-Host "Press Enter to exit"
