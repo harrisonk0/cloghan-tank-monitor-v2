@@ -4,26 +4,43 @@ Standalone Windows-only local web app for capturing tank-monitor screenshots, ex
 
 See `docs/product-spec.md` for the full specification.
 
-## Development
+## Quick Install
+
+Open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/YOUR_USERNAME/cloghan-tank-monitor-v2/main/install.ps1 | iex
+```
+
+This downloads and runs the installer, which:
+1. Installs Node.js and ngrok (via winget)
+2. Prompts for your API keys
+3. Installs dependencies
+4. Creates desktop and startup shortcuts
+
+## Manual Install
 
 1. Install Node.js 20+.
-2. Copy `.env.example` to `.env` and fill in AI settings.
-3. Install dependencies:
+2. Clone this repo.
+3. Copy `.env.example` to `.env` and fill in AI settings.
+4. Install dependencies:
 
 ```bash
 npm install
 ```
 
-4. Start development servers:
+5. Start the app:
+
+```bash
+npm run tray
+```
+
+The web dashboard will be at `http://localhost:5173`. The backend listens on `http://localhost:3000` by default.
+
+## Development
 
 ```bash
 npm run dev
 ```
 
-5. Open the web app:
-
-```txt
-http://localhost:5173
-```
-
-The backend listens on `http://localhost:3000` by default.
+Starts both the backend and frontend dev servers with hot reload.
