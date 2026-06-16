@@ -176,6 +176,31 @@ function updateTrayMenu(): void {
     },
   });
 
+  // View logs
+  const logDir = path.resolve(import.meta.dirname ?? ".", "..", "..", "..", "runtime", "logs");
+  const viewLogs = tray.item("View Logs", {
+    action: () => {
+      if (!fs.existsSync(logDir)) {
+        tray?.notify("No Logs", "No log files found yet.");
+        return;
+      }
+      const files = fs.readdirSync(logDir)
+        .filter((f) => f.endsWith(".log"))
+        .sort()
+        .reverse();
+      if (files.length === 0) {
+        tray?.notify("No Logs", "No log files found yet.");
+        return;
+      }
+      const latestLog = path.join(logDir, files[0]);
+      spawn("cmd.exe", ["/c", "start", "cmd.exe", "/k", `powershell -Command "Get-Content '${latestLog}' -Wait -Tail 50"`], {
+        windowsHide: false,
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    },
+  });
+
   // Quit
   const quit = tray.item("Quit", {
     action: () => {
@@ -195,6 +220,7 @@ function updateTrayMenu(): void {
     viewKeys,
     tray.separator(),
     pauseItem,
+    viewLogs,
     quit,
   );
 }

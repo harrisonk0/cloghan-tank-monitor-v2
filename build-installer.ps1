@@ -50,8 +50,9 @@ New-Item -ItemType Directory -Path $OutputDir | Out-Null
 # Write the packaged install script
 Set-Content -Path $OutputScript -Value $script -Encoding UTF8
 
-# Copy start-tray.bat
+# Copy start-tray.bat and VBS silent launcher
 Copy-Item (Join-Path $RepoRoot "start-tray.bat") $OutputBat
+Copy-Item (Join-Path $RepoRoot "start-tray-silent.vbs") (Join-Path $OutputDir "start-tray-silent.vbs")
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
@@ -61,8 +62,9 @@ Write-Host ""
 Write-Host "  Location: $OutputDir" -ForegroundColor White
 Write-Host ""
 Write-Host "  Contents:" -ForegroundColor White
-Write-Host "    install.ps1     (pre-configured installer)" -ForegroundColor Gray
-Write-Host "    start-tray.bat  (app launcher)" -ForegroundColor Gray
+Write-Host "    install.ps1          (pre-configured installer)" -ForegroundColor Gray
+Write-Host "    start-tray.bat       (app launcher - console)" -ForegroundColor Gray
+Write-Host "    start-tray-silent.vbs (app launcher - silent)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  To share:" -ForegroundColor White
 Write-Host "    1. Zip the package/ folder" -ForegroundColor Gray

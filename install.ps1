@@ -257,16 +257,16 @@ $WshShell = New-Object -ComObject WScript.Shell
 
 $desktop = [System.Environment]::GetFolderPath("Desktop")
 $lnk = $WshShell.CreateShortcut((Join-Path $desktop "Cloghan Tank Monitor.lnk"))
-$lnk.TargetPath = "cmd.exe"
-$lnk.Arguments = "/c `"$InstallDir\start-tray.bat`""
+$lnk.TargetPath = "wscript.exe"
+$lnk.Arguments = "`"$InstallDir\start-tray-silent.vbs`""
 $lnk.WorkingDirectory = $InstallDir
 $lnk.Description = "Cloghan Tank Monitor v2"
 $lnk.Save()
 
 $startup = [System.Environment]::GetFolderPath("Startup")
 $slnk = $WshShell.CreateShortcut((Join-Path $startup "Cloghan Tank Monitor.lnk"))
-$slnk.TargetPath = "cmd.exe"
-$slnk.Arguments = "/c `"$InstallDir\start-tray.bat`""
+$slnk.TargetPath = "wscript.exe"
+$slnk.Arguments = "`"$InstallDir\start-tray-silent.vbs`""
 $slnk.WorkingDirectory = $InstallDir
 $slnk.Description = "Cloghan Tank Monitor v2 - Auto-start"
 $slnk.WindowStyle = 7
