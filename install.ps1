@@ -157,10 +157,22 @@ if ($hasAuthToken) {
 } else {
     $token = Read-Host "  Enter your ngrok auth token (from https://dashboard.ngrok.com/get-started/your-authtoken)"
     if (-not [string]::IsNullOrWhiteSpace($token)) {
+        $configured = $false
         try {
-            ngrok config add-authtoken $token 2>$null
+            $result = & cmd /c "ngrok config add-authtoken $token 2>&1" 2>$null
+            if ($LASTEXITCODE -eq 0) { $configured = $true }
+        } catch {}
+        if (-not $configured) {
+            try {
+                $ngrokDir = Join-Path $env:LOCALAPPDATA "ngrok"
+                if (-not (Test-Path $ngrokDir)) { New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null }
+                Set-Content -Path (Join-Path $ngrokDir "ngrok.yml") -Value "version: " + [char]34 + "2" + [char]34 + "`nauthtoken: $token" -Encoding UTF8
+                $configured = $true
+            } catch {}
+        }
+        if ($configured) {
             Write-Host "  ngrok configured" -ForegroundColor Green
-        } catch {
+        } else {
             Write-Host "  WARNING: Could not configure ngrok." -ForegroundColor Yellow
         }
     } else {
