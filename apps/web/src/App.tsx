@@ -1,243 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useCallback, useEffect, useState, useRef } from "react";
+import { testConnection, checkSession, loginRequest, logoutRequest, apiGet, apiRequest } from "./api.js";
+import { defaultSettings } from "./types.js";
+import type { Page, RefreshStatus, ToastKind, Permissions, Reading, RefreshRun, Settings, RefreshResult, Toast } from "./types.js";
+import { asReadings, asRuns, asSettings, messageFromError, readingToPayload, settingsToPayload, normalizeReading, emptyReading, labelStatus } from "./helpers.js";
+import LoginScreen from "./components/LoginScreen.js";
+import Header from "./components/Header.js";
+import Dashboard from "./components/Dashboard.js";
+import ReadingsPage from "./components/ReadingsPage.js";
+import SettingsPage from "./components/SettingsPage.js";
+import HistoryPage from "./components/HistoryPage.js";
+import ReadingModal, { Panel } from "./components/ReadingModal.js";
 
-const TANKS = ["C1", "C2", "C3", "C4"] as const;
-const MAX_LEVEL = 22000;
-
-type Page = "dashboard" | "readings" | "settings" | "history";
-type RefreshStatus = "idle" | "running" | "success" | "warning" | "failed" | "needs_review";
-type ToastKind = "success" | "warning" | "error" | "info";
-type Permissions = "readonly" | "readwrite";
-
-type TankName = (typeof TANKS)[number];
-
-type TankReading = {
-  id?: number;
-  tank: TankName | string;
-  levelMm: number | null;
-  temperatureC: number | null;
-  tovM3: number | null;
-  gsvM3: number | null;
-};
-
-type Reading = {
-  id?: number;
-  capturedAt: string;
-  source: string;
-  confidence: number | null;
-  totalLevelMm: number | null;
-  totalLevelDiffMm: number | null;
-  totalGsvM3: number | null;
-  totalGsvDiffM3: number | null;
-  verified: boolean;
-  notes?: string | null;
-  tanks: TankReading[];
-};
-
-type RefreshRun = {
-  id?: number;
-  startedAt: string;
-  finishedAt: string | null;
-  status: string;
-  errorCode: string | null;
-  message: string | null;
-  confidence: number | null;
-  durationMs: number | null;
-  readingId: number | null;
-};
-
-type Settings = {
-  scheduleMode: "manual" | "10m" | "30m" | "1h" | "custom";
-  customIntervalMinutes: number;
-  notifySuccess: boolean;
-  notifyWarning: boolean;
-  notifyFailure: boolean;
-  screenshotRetentionHours: number | null;
-  aiConfigured: boolean;
-  aiBaseUrl?: string;
-  aiModel?: string;
-  scheduler?: {
-    nextRunAt: string | null;
-    running: boolean;
-    message: string;
-  };
-};
-
-type RefreshResult = {
-  status: RefreshStatus;
-  errorCode?: string | null;
-  message?: string;
-  confidence?: number | null;
-  readingId?: number | null;
-  reading?: Partial<Reading>;
-  refreshRunId?: number;
-  reviewId?: string;
-};
-
-type Toast = { id: number; kind: ToastKind; message: string };
-
-type RawReading = Partial<Reading> & {
-  captured_at?: unknown;
-  total_level_mm?: unknown;
-  total_level_diff_mm?: unknown;
-  total_gsv_m3?: unknown;
-  total_gsv_diff_m3?: unknown;
-};
-
-type RawTank = Partial<TankReading> & {
-  level_mm?: unknown;
-  temperature_c?: unknown;
-  tov_m3?: unknown;
-  gsv_m3?: unknown;
-};
-
-type RawRun = Partial<RefreshRun> & {
-  started_at?: unknown;
-  finished_at?: unknown;
-  error_code?: unknown;
-  duration_ms?: unknown;
-  reading_id?: unknown;
-};
-
-const emptyTank = (tank: TankName): TankReading => ({
-  tank,
-  levelMm: null,
-  temperatureC: null,
-  tovM3: null,
-  gsvM3: null,
-});
-
-const emptyReading = (): Reading => ({
-  capturedAt: new Date().toISOString(),
-  source: "manual",
-  confidence: null,
-  totalLevelMm: null,
-  totalLevelDiffMm: null,
-  totalGsvM3: null,
-  totalGsvDiffM3: null,
-  verified: true,
-  notes: "",
-  tanks: TANKS.map(emptyTank),
-});
-
-const defaultSettings: Settings = {
-  scheduleMode: "manual",
-  customIntervalMinutes: 15,
-  notifySuccess: true,
-  notifyWarning: true,
-  notifyFailure: true,
-  screenshotRetentionHours: 3,
-  aiConfigured: false,
-};
-
-// ============================================================
-// API Layer — dynamic server URL + auth
-// ============================================================
-
-function getServerUrl(): string {
-  return localStorage.getItem("serverUrl") ?? "";
-}
-
-function getApiKey(): string {
-  return localStorage.getItem("apiKey") ?? "";
-}
-
-function setServerConfig(url: string, key: string) {
-  localStorage.setItem("serverUrl", url.replace(/\/+$/, ""));
-  localStorage.setItem("apiKey", key);
-}
-
-function clearServerConfig() {
-  localStorage.removeItem("serverUrl");
-  localStorage.removeItem("apiKey");
-}
-
-async function testConnection(url: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${url.replace(/\/+$/, "")}/api/health`, {
-      method: "GET",
-      headers: { "ngrok-skip-browser-warning": "true" },
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function loginRequest(url: string, key: string): Promise<{ ok: boolean; permissions?: Permissions; error?: string }> {
-  try {
-    const res = await fetch(`${url.replace(/\/+$/, "")}/api/auth`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
-      body: JSON.stringify({ key }),
-      credentials: "include",
-    });
-    const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error };
-    return { ok: true, permissions: data.permissions };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Connection failed" };
-  }
-}
-
-async function checkSession(url: string): Promise<{ authenticated: boolean; permissions?: Permissions }> {
-  try {
-    const res = await fetch(`${url}/api/auth`, {
-      credentials: "include",
-      headers: { "ngrok-skip-browser-warning": "true" },
-    });
-    return await res.json();
-  } catch {
-    return { authenticated: false };
-  }
-}
-
-async function logoutRequest(url: string) {
-  try {
-    await fetch(`${url}/api/auth`, {
-      method: "DELETE",
-      credentials: "include",
-      headers: { "ngrok-skip-browser-warning": "true" },
-    });
-  } catch { /* ignore */ }
-  clearServerConfig();
-}
-
-async function apiGet(path: string) {
-  return apiRequest(path, { method: "GET" });
-}
-
-async function apiRequest(path: string, init: RequestInit) {
-  const baseUrl = getServerUrl();
-  const apiKey = getApiKey();
-  const hasBody = init.body !== undefined && init.body !== null;
-  const headers: Record<string, string> = {
-    "ngrok-skip-browser-warning": "true",
-    ...(hasBody ? { "Content-Type": "application/json" } : {}),
-    ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
-  };
-  const response = await fetch(`${baseUrl}/api${path}`, {
-    ...init,
-    headers: { ...headers, ...((init.headers as Record<string, string>) ?? {}) },
-    credentials: "include",
-  });
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(data?.message || data?.error || response.statusText);
-  return data;
-}
-
-// ============================================================
-// App
-// ============================================================
+let nextToastId = 0;
 
 function App() {
   const [serverUrl, setServerUrl] = useState<string | null>(null);
@@ -261,20 +35,23 @@ function App() {
     const url = localStorage.getItem("serverUrl");
     const key = localStorage.getItem("apiKey");
     if (url && key) {
+      let cancelled = false;
       checkSession(url).then((s) => {
+        if (cancelled) return;
         if (s.authenticated) {
           setServerUrl(url);
           setPermissions(s.permissions ?? "readonly");
         } else {
-          // Session expired, try direct API key
           loginRequest(url, key).then((r) => {
+            if (cancelled) return;
             if (r.ok && r.permissions) {
               setServerUrl(url);
               setPermissions(r.permissions);
             }
-          });
+          }).catch(() => {});
         }
-      });
+      }).catch(() => {});
+      return () => { cancelled = true; };
     }
   }, []);
 
@@ -288,14 +65,21 @@ function App() {
   // Connection heartbeat
   useEffect(() => {
     if (!serverUrl) return;
+    const controller = new AbortController();
     const interval = setInterval(async () => {
-      const ok = await testConnection(serverUrl);
-      setConnectionOk(ok);
+      const ok = await testConnection(serverUrl, controller.signal);
+      if (!controller.signal.aborted) setConnectionOk(ok);
     }, 30000);
-    return () => clearInterval(interval);
+    return () => { controller.abort(); clearInterval(interval); };
   }, [serverUrl]);
 
+  const loadAllController = useRef<AbortController | null>(null);
+
   const loadAll = useCallback(async () => {
+    loadAllController.current?.abort();
+    const controller = new AbortController();
+    loadAllController.current = controller;
+
     setLoading(true);
     try {
       const [readingsData, runsData, settingsData] = await Promise.all([
@@ -303,13 +87,15 @@ function App() {
         apiGet("/refresh-runs"),
         apiGet("/settings"),
       ]);
+      if (controller.signal.aborted) return;
       setReadings(asReadings(readingsData));
       setRuns(asRuns(runsData));
       setSettings(asSettings(settingsData));
     } catch (error) {
+      if (controller.signal.aborted) return;
       pushToast("error", messageFromError(error));
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
 
@@ -404,13 +190,14 @@ function App() {
   }
 
   function handleLogout() {
+    if (!window.confirm("Are you sure you want to logout?")) return;
     if (serverUrl) void logoutRequest(serverUrl);
     setServerUrl(null);
     setPermissions(null);
   }
 
   function pushToast(kind: ToastKind, message: string) {
-    const id = Date.now() + Math.random();
+    const id = ++nextToastId;
     setToasts((items) => [...items, { id, kind, message }]);
     window.setTimeout(() => setToasts((items) => items.filter((t) => t.id !== id)), 4500);
   }
@@ -426,8 +213,6 @@ function App() {
       pushToast("info", result.message || labelStatus(result.status));
     }
   }
-
-  // ── Login screen ──────────────────────────────────────────────────────────
 
   if (!serverUrl || !permissions) {
     return <LoginScreen onLogin={(url, perm) => { setServerUrl(url); setPermissions(perm); }} />;
@@ -469,707 +254,13 @@ function App() {
           onClose={() => { setReview(null); setRefreshStatus("warning"); setRefreshMessage("Extraction cancelled."); pushToast("info", "Extraction cancelled."); }}
         />
       )}
-      <div className="toast-stack">
+      <div className="toast-stack" role="status" aria-live="polite">
         {toasts.map((toast) => (
           <div key={toast.id} className={`toast ${toast.kind}`}>{toast.message}</div>
         ))}
       </div>
     </div>
   );
-}
-
-// ============================================================
-// Login Screen
-// ============================================================
-
-function LoginScreen({ onLogin }: { onLogin: (url: string, permissions: Permissions) => void }) {
-  const [serverUrl, setServerUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState<"url" | "key">("url");
-  const [reachable, setReachable] = useState(false);
-
-  async function handleTestUrl() {
-    setLoading(true);
-    setError("");
-    const url = serverUrl.replace(/\/+$/, "");
-    const ok = await testConnection(url);
-    setReachable(ok);
-    setLoading(false);
-    if (ok) {
-      setStep("key");
-    } else {
-      setError("Cannot reach server. Check the URL and ensure the server is running.");
-    }
-  }
-
-  async function handleConnect() {
-    setLoading(true);
-    setError("");
-    const url = serverUrl.replace(/\/+$/, "");
-    const result = await loginRequest(url, apiKey);
-    setLoading(false);
-    if (result.ok && result.permissions) {
-      setServerConfig(url, apiKey);
-      onLogin(url, result.permissions);
-    } else {
-      setError(result.error || "Invalid API key.");
-    }
-  }
-
-  return (
-    <div className="login-screen">
-      <div className="login-card">
-        <div className="login-header">
-          <span className="eyebrow">Cloghan Terminal</span>
-          <h1>Tank Monitor</h1>
-          <p className="login-subtitle">Connect to your server</p>
-        </div>
-
-        {step === "url" ? (
-          <>
-            <div className="login-field">
-              <label>Server URL</label>
-              <input
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                placeholder="https://xxxx.ngrok-free.app"
-                autoFocus
-                onKeyDown={(e) => { if (e.key === "Enter" && serverUrl) handleTestUrl(); }}
-              />
-            </div>
-            {error && <div className="login-error">{error}</div>}
-            <button className="primary login-btn" onClick={handleTestUrl} disabled={!serverUrl || loading}>
-              {loading ? "Testing\u2026" : "Test Connection"}
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="login-field">
-              <label>Server URL</label>
-              <div className="login-url-confirmed">{serverUrl} <span className="login-ok">Reachable</span></div>
-            </div>
-            <div className="login-field">
-              <label>API Key</label>
-              <input
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="ctm_live_..."
-                type="password"
-                autoFocus
-                onKeyDown={(e) => { if (e.key === "Enter" && apiKey) handleConnect(); }}
-              />
-            </div>
-            {error && <div className="login-error">{error}</div>}
-            <div className="login-actions">
-              <button onClick={() => { setStep("url"); setError(""); }}>Back</button>
-              <button className="primary" onClick={handleConnect} disabled={!apiKey || loading}>
-                {loading ? "Connecting\u2026" : "Connect"}
-              </button>
-            </div>
-          </>
-        )}
-
-        <div className="login-help">
-          <p>Generate an API key from the server tray menu:</p>
-          <p className="login-help-cmd">Right-click tray icon &rarr; Generate Read/Write API Key</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Header
-// ============================================================
-
-function Header(props: {
-  page: Page;
-  setPage: (page: Page) => void;
-  refreshData: () => void;
-  refreshStatus: RefreshStatus;
-  refreshMessage: string;
-  progress: number;
-  isReadOnly: boolean;
-  connectionOk: boolean;
-  onLogout: () => void;
-}) {
-  return (
-    <header className="site-header">
-      <div className="header-top">
-        <div className="header-title">
-          <span className="eyebrow">Cloghan Terminal</span>
-          <h1>Tank Monitor</h1>
-        </div>
-        <div className="header-actions">
-          <span className={`connection-dot ${props.connectionOk ? "connected" : "disconnected"}`} title={props.connectionOk ? "Connected" : "Disconnected"} />
-          {props.isReadOnly && <span className="readonly-badge">Read Only</span>}
-          {!props.isReadOnly && (
-            <button className="primary" onClick={props.refreshData} disabled={props.refreshStatus === "running"}>
-              {props.refreshStatus === "running" ? "Extracting\u2026" : "Refresh"}
-            </button>
-          )}
-          <button className="logout-btn" onClick={props.onLogout} title="Logout">{"\u2190"}</button>
-        </div>
-      </div>
-      <div className="status-row">
-        <span className={`status-pill ${props.refreshStatus}`}>{labelStatus(props.refreshStatus)}</span>
-        <span>{props.refreshMessage}</span>
-      </div>
-      <div className="progress-track"><div className="progress-fill" style={{ width: `${props.progress}%` }} /></div>
-      <nav className="tabs" role="tablist">
-        {(["dashboard", "readings", "settings", "history"] as Page[]).map((item) => (
-          <button
-            key={item}
-            role="tab"
-            aria-selected={props.page === item}
-            className={props.page === item ? "active" : ""}
-            onClick={() => props.setPage(item)}
-          >
-            {item === "history" ? "History" : titleCase(item)}
-          </button>
-        ))}
-      </nav>
-    </header>
-  );
-}
-
-// ============================================================
-// Dashboard
-// ============================================================
-
-function Dashboard({ readings, latest, previous, runs }: { readings: Reading[]; latest?: Reading; previous?: Reading; runs: RefreshRun[] }) {
-  if (!latest) {
-    return <div className="page-grid"><div className="empty-state">No readings yet. Click Refresh to capture tank data.</div></div>;
-  }
-
-  const chartData = readings.slice(0, 30).reverse().map((r) => ({
-    time: formatShortDate(r.capturedAt),
-    level: r.totalLevelMm ?? 0,
-    gsv: r.totalGsvM3 ?? 0,
-  }));
-
-  const latestRun = runs[0];
-
-  return (
-    <div className="page-grid">
-      <TankVisualisations latest={latest} previous={previous} />
-
-      <section className="panel hero-panel">
-        <div className="hero-metrics">
-          <div className="hero-metric">
-            <span className="hero-metric-label">Total level</span>
-            <strong className="hero-metric-value">{formatNumber(latest.totalLevelMm, " mm")}</strong>
-            {latest.totalLevelDiffMm != null && previous?.totalLevelDiffMm != null && (
-              <span className={`hero-metric-delta ${latest.totalLevelDiffMm < 0 ? "negative" : ""}`}>
-                {latest.totalLevelDiffMm > 0 ? "+" : ""}{formatNumber(latest.totalLevelDiffMm, " mm")}
-              </span>
-            )}
-          </div>
-          <div className="hero-metric">
-            <span className="hero-metric-label">Total GSV</span>
-            <strong className="hero-metric-value">{formatNumber(latest.totalGsvM3, " m\u00B3")}</strong>
-            {latest.totalGsvDiffM3 != null && previous?.totalGsvDiffM3 != null && (
-              <span className={`hero-metric-delta ${latest.totalGsvDiffM3 < 0 ? "negative" : ""}`}>
-                {latest.totalGsvDiffM3 > 0 ? "+" : ""}{formatNumber(latest.totalGsvDiffM3, " m\u00B3")}
-              </span>
-            )}
-          </div>
-        </div>
-        <div>
-          <p className="hero-timestamp">{formatDate(latest.capturedAt)}</p>
-          <p className="hero-timestamp">{latest.source} &middot; {formatConfidence(latest.confidence)}</p>
-          {latestRun && (
-            <div className="history-summary" style={{ marginTop: "0.75rem" }}>
-              <span className={`status-pill ${latestRun.status}`}>{latestRun.status}</span>
-              <strong>{latestRun.message || "No message"}</strong>
-              <span>{formatDuration(latestRun.durationMs)}</span>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <ChartPanel title="Level trend" data={chartData} dataKey="level" stroke="var(--accent-cyan)" suffix=" mm" />
-      <ChartPanel title="GSV trend" data={chartData} dataKey="gsv" stroke="var(--accent-green)" suffix=" m\u00B3" />
-    </div>
-  );
-}
-
-// ============================================================
-// Tank Visualisations
-// ============================================================
-
-function TankVisualisations({ latest, previous }: { latest: Reading; previous?: Reading }) {
-  return (
-    <section className="tanks-visual">
-      <div className="tanks-visual-header">
-        <h2>Tank levels</h2>
-        <span className="eyebrow">{formatDate(latest.capturedAt)}</span>
-      </div>
-      <div className="tanks-grid">
-        {TANKS.map((tank) => {
-          const t = latest.tanks.find((item) => item.tank === tank);
-          const prev = previous?.tanks.find((item) => item.tank === tank);
-          return <TankViz key={tank} tank={tank} reading={t} previous={prev} />;
-        })}
-      </div>
-    </section>
-  );
-}
-
-function TankViz({ tank, reading, previous }: { tank: TankName; reading?: TankReading; previous?: TankReading }) {
-  const level = reading?.levelMm;
-  const fillPct = level != null ? Math.min((level / MAX_LEVEL) * 100, 100) : 0;
-  const gsvDiff = reading?.gsvM3 != null && previous?.gsvM3 != null ? reading.gsvM3 - previous.gsvM3 : null;
-
-  return (
-    <div className="tank-viz">
-      <span className="tank-viz-label">{tank}</span>
-      <div className="tank-viz-body">
-        <div className="tank-viz-shell">
-          <div className="tank-viz-fill" style={{ height: `${fillPct}%` }} />
-        </div>
-        <div className="tank-viz-ticks">
-          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <span key={i} className="tank-viz-tick" />)}
-        </div>
-      </div>
-      <span className="tank-viz-value">
-        {level != null ? formatNumber(level) : "\u2014"}
-        {level != null && <span className="tank-viz-unit"> mm</span>}
-      </span>
-      <div className="tank-viz-meta">
-        <div className="tank-viz-meta-row">
-          <span className="tank-viz-meta-label">Temp</span>
-          <span className="tank-viz-meta-value">{reading?.temperatureC != null ? `${reading.temperatureC}\u00B0C` : "\u2014"}</span>
-        </div>
-        <div className="tank-viz-meta-row">
-          <span className="tank-viz-meta-label">TOV</span>
-          <span className="tank-viz-meta-value">{reading?.tovM3 != null ? `${formatNumber(reading.tovM3)} m\u00B3` : "\u2014"}</span>
-        </div>
-        <div className="tank-viz-meta-row">
-          <span className="tank-viz-meta-label">GSV</span>
-          <span className="tank-viz-meta-value">
-            {reading?.gsvM3 != null ? `${formatNumber(reading.gsvM3)} m\u00B3` : "\u2014"}
-            {gsvDiff != null && <span className={`gsv-diff ${gsvDiff < 0 ? "negative" : ""}`}> {gsvDiff > 0 ? "+" : ""}{formatNumber(gsvDiff)}</span>}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Charts
-// ============================================================
-
-function ChartPanel({ title, data, dataKey, stroke, suffix }: { title: string; data: Array<Record<string, string | number>>; dataKey: string; stroke: string; suffix: string }) {
-  return (
-    <section className="panel chart-panel">
-      <h3>{title}</h3>
-      {data.length ? (
-        <ResponsiveContainer width="100%" height={260}>
-          <LineChart data={data} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="time" minTickGap={28} tick={{ fill: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }} axisLine={{ stroke: "var(--border)" }} tickLine={{ stroke: "var(--border)" }} />
-            <YAxis width={68} tick={{ fill: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }} axisLine={{ stroke: "var(--border)" }} tickLine={{ stroke: "var(--border)" }} />
-            <Tooltip
-              contentStyle={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 6, fontFamily: "var(--font-mono)", fontSize: 12 }}
-              labelStyle={{ color: "var(--text-dim)" }}
-              itemStyle={{ color: "var(--text-primary)" }}
-              formatter={(value) => [`${Number(value).toLocaleString()}${suffix}`, title]}
-            />
-            <Line type="monotone" dataKey={dataKey} stroke={stroke} strokeWidth={1.5} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      ) : (
-        <p style={{ color: "var(--text-dim)", margin: 0 }}>No data yet.</p>
-      )}
-    </section>
-  );
-}
-
-// ============================================================
-// Readings Page
-// ============================================================
-
-function ReadingsPage({ readings, isReadOnly, onAdd, onEdit, onDelete }: { readings: Reading[]; isReadOnly: boolean; onAdd: () => void; onEdit: (reading: Reading) => void; onDelete: (id?: number) => void }) {
-  const [expanded, setExpanded] = useState<number | null>(null);
-
-  return (
-    <section className="panel full-width">
-      <div className="section-header">
-        <h2>Readings</h2>
-        {!isReadOnly && <button className="primary" onClick={onAdd}>Add reading</button>}
-      </div>
-      <div className="readings-list">
-        {!readings.length && <p className="empty-text">No readings yet.</p>}
-        {readings.map((r, i) => (
-          <ReadingCard
-            key={r.id ?? r.capturedAt}
-            reading={r}
-            previous={readings[i + 1]}
-            isExpanded={expanded === r.id}
-            isReadOnly={isReadOnly}
-            onToggle={() => setExpanded(expanded === r.id ? null : r.id ?? null)}
-            onEdit={onEdit}
-            onDelete={onDelete}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ReadingCard({ reading, previous, isExpanded, isReadOnly, onToggle, onEdit, onDelete }: { reading: Reading; previous?: Reading; isExpanded: boolean; isReadOnly: boolean; onToggle: () => void; onEdit: (r: Reading) => void; onDelete: (id?: number) => void }) {
-  const byTank = Object.fromEntries(reading.tanks.map((t) => [t.tank, t]));
-  const prevByTank = previous ? Object.fromEntries(previous.tanks.map((t) => [t.tank, t])) : {};
-  return (
-    <div className={`reading-card ${isExpanded ? "expanded" : ""}`}>
-      <button className="reading-card-header" onClick={onToggle}>
-        <div className="reading-card-summary">
-          <span className="reading-card-time">{formatDate(reading.capturedAt)}</span>
-          <span className={`status-pill ${reading.verified ? "success" : ""}`}>{reading.verified ? "verified" : "unverified"}</span>
-          <span className="reading-card-meta">{reading.source}{reading.confidence != null ? ` \u00B7 ${formatConfidence(reading.confidence)}` : ""}</span>
-        </div>
-        <span className={`reading-card-chevron ${isExpanded ? "open" : ""}`}>{"\u25B6"}</span>
-      </button>
-      {isExpanded && (
-        <div className="reading-card-body">
-          <table className="tank-table">
-            <thead>
-              <tr>
-                <th>Tank</th>
-                <th>Level mm</th>
-                <th>Temp &deg;C</th>
-                <th>TOV m&sup3;</th>
-                <th>GSV m&sup3;</th>
-                <th>GSV Diff</th>
-              </tr>
-            </thead>
-            <tbody>
-              {TANKS.map((tank) => {
-                const t = byTank[tank] as TankReading | undefined;
-                const prev = prevByTank[tank] as TankReading | undefined;
-                const gsvDiff = t?.gsvM3 != null && prev?.gsvM3 != null ? t.gsvM3 - prev.gsvM3 : null;
-                return (
-                  <tr key={tank}>
-                    <td className="tank-id">{tank}</td>
-                    <td>{formatNumber(t?.levelMm)}</td>
-                    <td>{formatNumber(t?.temperatureC)}</td>
-                    <td>{formatNumber(t?.tovM3)}</td>
-                    <td>{formatNumber(t?.gsvM3)}</td>
-                    <td className={gsvDiff != null && gsvDiff < 0 ? "diff-negative" : ""}>{gsvDiff != null ? `${gsvDiff > 0 ? "+" : ""}${formatNumber(gsvDiff)}` : "\u2014"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td className="tank-id">Totals</td>
-                <td className="total-cell">{formatNumber(reading.totalLevelMm)}</td>
-                <td></td>
-                <td></td>
-                <td className="total-cell">{formatNumber(reading.totalGsvM3)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          {reading.notes && <p className="reading-notes">{reading.notes}</p>}
-          {!isReadOnly && (
-            <div className="reading-card-actions">
-              <button onClick={() => onEdit(reading)}>Edit</button>
-              <button className="danger" onClick={() => onDelete(reading.id)}>Delete</button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================
-// Settings Page
-// ============================================================
-
-function SettingsPage({ settings, isReadOnly, onSave }: { settings: Settings; isReadOnly: boolean; onSave: (s: Settings) => void }) {
-  const [draft, setDraft] = useState(settings);
-  useEffect(() => setDraft(settings), [settings]);
-  return (
-    <section className="panel settings-panel">
-      <div className="section-header">
-        <h2>Settings</h2>
-        {!isReadOnly && <button className="primary" onClick={() => onSave(draft)}>Save</button>}
-      </div>
-      <label>
-        Refresh schedule
-        <select value={draft.scheduleMode} onChange={(e) => setDraft({ ...draft, scheduleMode: e.target.value as Settings["scheduleMode"] })} disabled={isReadOnly}>
-          <option value="manual">Manual only</option>
-          <option value="10m">Every 10 minutes</option>
-          <option value="30m">Every 30 minutes</option>
-          <option value="1h">Every hour</option>
-          <option value="custom">Custom interval</option>
-        </select>
-      </label>
-      <label>
-        Custom interval (minutes)
-        <input type="number" min="1" value={draft.customIntervalMinutes} onChange={(e) => setDraft({ ...draft, customIntervalMinutes: Number(e.target.value) })} disabled={draft.scheduleMode !== "custom" || isReadOnly} />
-      </label>
-      <div className="check-grid">
-        <label><input type="checkbox" checked={draft.notifySuccess} onChange={(e) => setDraft({ ...draft, notifySuccess: e.target.checked })} disabled={isReadOnly} /> On success</label>
-        <label><input type="checkbox" checked={draft.notifyWarning} onChange={(e) => setDraft({ ...draft, notifyWarning: e.target.checked })} disabled={isReadOnly} /> On warning</label>
-        <label><input type="checkbox" checked={draft.notifyFailure} onChange={(e) => setDraft({ ...draft, notifyFailure: e.target.checked })} disabled={isReadOnly} /> On failure</label>
-      </div>
-      <div className="readonly-grid">
-        <div><span>Screenshots</span><strong>{draft.screenshotRetentionHours ?? 3}h retention</strong></div>
-        <div><span>AI model</span><strong>{draft.aiModel || "Not configured"}</strong></div>
-        <div><span>AI status</span><strong>{draft.aiConfigured ? "Connected" : "Not configured"}</strong></div>
-        <div><span>AI endpoint</span><strong>{draft.aiBaseUrl || "From .env"}</strong></div>
-      </div>
-      {settings.scheduler && (
-        <div className="readonly-grid">
-          <div><span>Next refresh</span><strong>{settings.scheduler.nextRunAt ? formatDate(settings.scheduler.nextRunAt) : "Manual"}</strong></div>
-          <div><span>Scheduler</span><strong>{settings.scheduler.running ? "Running" : settings.scheduler.message}</strong></div>
-        </div>
-      )}
-    </section>
-  );
-}
-
-// ============================================================
-// History Page
-// ============================================================
-
-function HistoryPage({ runs }: { runs: RefreshRun[] }) {
-  return (
-    <section className="panel full-width">
-      <div className="section-header"><h2>Refresh history</h2></div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Started</th><th>Finished</th><th>Status</th><th>Error</th><th>Message</th><th>Confidence</th><th>Duration</th><th>Reading</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.id ?? run.startedAt}>
-                <td style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem" }}>{formatDate(run.startedAt)}</td>
-                <td>{run.finishedAt ? formatDate(run.finishedAt) : "\u2014"}</td>
-                <td><span className={`status-pill ${run.status}`}>{run.status}</span></td>
-                <td>{run.errorCode || "\u2014"}</td>
-                <td>{run.message || "\u2014"}</td>
-                <td>{formatConfidence(run.confidence)}</td>
-                <td style={{ fontFamily: "var(--font-mono)" }}>{formatDuration(run.durationMs)}</td>
-                <td>{run.readingId ?? "\u2014"}</td>
-              </tr>
-            ))}
-            {!runs.length && <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--text-dim)" }}>No refresh attempts yet.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-// ============================================================
-// Modal
-// ============================================================
-
-function ReadingModal({ title, initial, confirmLabel = "Save", onSave, onClose }: { title: string; initial: Reading; confirmLabel?: string; onSave: (r: Reading) => void; onClose: () => void }) {
-  const [draft, setDraft] = useState(normalizeReading(initial));
-  const setField = (key: keyof Reading, value: Reading[keyof Reading]) => setDraft((c) => ({ ...c, [key]: value }));
-  const setTank = (tank: string, key: keyof TankReading, value: number | null) =>
-    setDraft((c) => ({ ...c, tanks: c.tanks.map((t) => t.tank === tank ? { ...t, [key]: value } : t) }));
-
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal-card">
-        <div className="section-header"><h2>{title}</h2><button onClick={onClose}>Cancel</button></div>
-        <div className="form-grid">
-          <label>Captured at<input type="datetime-local" value={toDateTimeLocal(draft.capturedAt)} onChange={(e) => setField("capturedAt", new Date(e.target.value).toISOString())} /></label>
-          <label>Source<input value={draft.source} onChange={(e) => setField("source", e.target.value)} /></label>
-          <label>Confidence<input type="number" step="0.01" min="0" max="1" value={draft.confidence ?? ""} onChange={(e) => setField("confidence", nullableNumber(e.target.value))} /></label>
-          <label className="checkbox-label" style={{ marginTop: "1.4rem" }}><input type="checkbox" checked={draft.verified} onChange={(e) => setField("verified", e.target.checked)} /> Verified</label>
-        </div>
-        <div className="tank-form-grid">
-          {draft.tanks.map((tank) => (
-            <fieldset key={tank.tank}>
-              <legend>{tank.tank}</legend>
-              <label>Level (mm)<input type="number" value={tank.levelMm ?? ""} onChange={(e) => setTank(tank.tank, "levelMm", nullableNumber(e.target.value))} /></label>
-              <label>Temp (&deg;C)<input type="number" step="0.01" value={tank.temperatureC ?? ""} onChange={(e) => setTank(tank.tank, "temperatureC", nullableNumber(e.target.value))} /></label>
-              <label>TOV (m&sup3;)<input type="number" step="0.001" value={tank.tovM3 ?? ""} onChange={(e) => setTank(tank.tank, "tovM3", nullableNumber(e.target.value))} /></label>
-              <label>GSV (m&sup3;)<input type="number" step="0.001" value={tank.gsvM3 ?? ""} onChange={(e) => setTank(tank.tank, "gsvM3", nullableNumber(e.target.value))} /></label>
-            </fieldset>
-          ))}
-        </div>
-        <div className="form-grid">
-          <label>Total level (mm)<input type="number" value={draft.totalLevelMm ?? ""} onChange={(e) => setField("totalLevelMm", nullableNumber(e.target.value))} /></label>
-          <label>Level diff (mm)<input type="number" value={draft.totalLevelDiffMm ?? ""} onChange={(e) => setField("totalLevelDiffMm", nullableNumber(e.target.value))} /></label>
-          <label>Total GSV (m&sup3;)<input type="number" step="0.001" value={draft.totalGsvM3 ?? ""} onChange={(e) => setField("totalGsvM3", nullableNumber(e.target.value))} /></label>
-          <label>GSV diff (m&sup3;)<input type="number" step="0.001" value={draft.totalGsvDiffM3 ?? ""} onChange={(e) => setField("totalGsvDiffM3", nullableNumber(e.target.value))} /></label>
-        </div>
-        <label>Notes<textarea value={draft.notes ?? ""} onChange={(e) => setField("notes", e.target.value)} /></label>
-        <div className="modal-actions">
-          <button onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={() => onSave(draft)}>{confirmLabel}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Small shared components
-// ============================================================
-
-function Panel({ children }: { children: React.ReactNode }) {
-  return <div className="panel full-width">{children}</div>;
-}
-
-// ============================================================
-// Data normalisation
-// ============================================================
-
-function asReadings(data: unknown): Reading[] {
-  const list = Array.isArray(data) ? data : Array.isArray((data as { readings?: unknown[] })?.readings) ? (data as { readings: unknown[] }).readings : [];
-  return list.map((item) => normalizeReading(item as RawReading)).sort((a, b) => Date.parse(b.capturedAt) - Date.parse(a.capturedAt));
-}
-
-function asRuns(data: unknown): RefreshRun[] {
-  const list = Array.isArray(data) ? data : Array.isArray((data as { refreshRuns?: unknown[]; runs?: unknown[] })?.refreshRuns) ? (data as { refreshRuns: unknown[] }).refreshRuns : Array.isArray((data as { runs?: unknown[] })?.runs) ? (data as { runs: unknown[] }).runs : [];
-  return list.map((item) => normalizeRun(item as RawRun)).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
-}
-
-function asSettings(data: unknown): Settings {
-  const src = ((data as { settings?: unknown })?.settings || data || {}) as Record<string, unknown>;
-  return {
-    ...defaultSettings,
-    scheduleMode: String(src.scheduleMode || src.refreshSchedule || defaultSettings.scheduleMode) as Settings["scheduleMode"],
-    customIntervalMinutes: Number(src.customIntervalMinutes || defaultSettings.customIntervalMinutes),
-    notifySuccess: toBool(src.notifySuccess, true),
-    notifyWarning: toBool(src.notifyWarning, true),
-    notifyFailure: toBool(src.notifyFailure, true),
-    screenshotRetentionHours: src.screenshotRetentionHours == null ? defaultSettings.screenshotRetentionHours : Number(src.screenshotRetentionHours),
-    aiConfigured: toBool(src.aiConfigured || src.ai_configured, false),
-    aiBaseUrl: stringOrUndefined(src.aiBaseUrl),
-    aiModel: stringOrUndefined(src.aiModel),
-  };
-}
-
-function normalizeReading(raw: RawReading): Reading {
-  const tanks = Array.isArray(raw.tanks) ? raw.tanks : [];
-  return {
-    id: numberOrUndefined(raw.id),
-    capturedAt: String(raw.capturedAt || raw.captured_at || new Date().toISOString()),
-    source: String(raw.source || "ai"),
-    confidence: nullableNumber(raw.confidence),
-    totalLevelMm: nullableNumber(raw.totalLevelMm ?? raw.total_level_mm),
-    totalLevelDiffMm: nullableNumber(raw.totalLevelDiffMm ?? raw.total_level_diff_mm),
-    totalGsvM3: nullableNumber(raw.totalGsvM3 ?? raw.total_gsv_m3),
-    totalGsvDiffM3: nullableNumber(raw.totalGsvDiffM3 ?? raw.total_gsv_diff_m3),
-    verified: toBool(raw.verified, false),
-    notes: stringOrUndefined(raw.notes) || "",
-    tanks: TANKS.map((tank) => normalizeTank(tanks.find((item) => (item as TankReading).tank === tank) as RawTank | undefined, tank)),
-  };
-}
-
-function normalizeTank(raw: RawTank | undefined, tank: TankName): TankReading {
-  return {
-    id: numberOrUndefined(raw?.id),
-    tank,
-    levelMm: nullableNumber(raw?.levelMm ?? raw?.level_mm),
-    temperatureC: nullableNumber(raw?.temperatureC ?? raw?.temperature_c),
-    tovM3: nullableNumber(raw?.tovM3 ?? raw?.tov_m3),
-    gsvM3: nullableNumber(raw?.gsvM3 ?? raw?.gsv_m3),
-  };
-}
-
-function normalizeRun(raw: RawRun): RefreshRun {
-  return {
-    id: numberOrUndefined(raw.id),
-    startedAt: String(raw.startedAt || raw.started_at || new Date().toISOString()),
-    finishedAt: raw.finishedAt || raw.finished_at ? String(raw.finishedAt || raw.finished_at) : null,
-    status: String(raw.status || "unknown"),
-    errorCode: stringOrUndefined(raw.errorCode ?? raw.error_code) || null,
-    message: stringOrUndefined(raw.message) || null,
-    confidence: nullableNumber(raw.confidence),
-    durationMs: nullableNumber(raw.durationMs ?? raw.duration_ms),
-    readingId: nullableNumber(raw.readingId ?? raw.reading_id),
-  };
-}
-
-function readingToPayload(reading: Reading) {
-  return { ...reading, tanks: reading.tanks.map(({ tank, levelMm, temperatureC, tovM3, gsvM3 }) => ({ tank, levelMm, temperatureC, tovM3, gsvM3 })) };
-}
-
-function settingsToPayload(s: Settings) {
-  return { scheduleMode: s.scheduleMode, customIntervalMinutes: s.customIntervalMinutes, notifySuccess: s.notifySuccess, notifyWarning: s.notifyWarning, notifyFailure: s.notifyFailure };
-}
-
-// ============================================================
-// Helpers
-// ============================================================
-
-function nullableNumber(v: unknown): number | null {
-  if (v === "" || v === undefined || v === null) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function numberOrUndefined(v: unknown): number | undefined {
-  const n = nullableNumber(v);
-  return n === null ? undefined : n;
-}
-
-function toBool(v: unknown, fb: boolean): boolean {
-  if (v === undefined || v === null) return fb;
-  if (typeof v === "boolean") return v;
-  if (typeof v === "number") return v === 1;
-  return ["true", "1", "yes"].includes(String(v).toLowerCase());
-}
-
-function stringOrUndefined(v: unknown) {
-  return typeof v === "string" && v.trim() ? v : undefined;
-}
-
-function formatNumber(value: number | null | undefined, suffix = "") {
-  if (value === null || value === undefined) return "\u2014";
-  return `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 }).format(value)}${suffix}`;
-}
-
-function formatConfidence(value: number | null | undefined) {
-  if (value === null || value === undefined) return "\u2014";
-  return `${Math.round(value * 100)}%`;
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-}
-
-function formatShortDate(value: string) {
-  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
-}
-
-function formatDuration(value: number | null | undefined) {
-  if (value === null || value === undefined) return "\u2014";
-  return `${(Math.round(value) / 1000).toFixed(1)}s`;
-}
-
-function toDateTimeLocal(value: string) {
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 16);
-}
-
-function labelStatus(status: string) {
-  return status === "idle" ? "Ready" : status.replace(/_/g, " ");
-}
-
-function titleCase(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function messageFromError(error: unknown) {
-  return error instanceof Error ? error.message : "Unexpected error";
 }
 
 export default App;

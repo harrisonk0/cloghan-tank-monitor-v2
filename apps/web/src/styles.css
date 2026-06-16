@@ -720,16 +720,16 @@ tbody tr:hover {
 .gsv-diff {
   font-size: 0.75rem;
   margin-left: 0.35rem;
-  color: var(--color-green);
+  color: var(--accent-green);
   font-weight: 600;
 }
 
 .gsv-diff.negative {
-  color: var(--color-red);
+  color: var(--accent-red);
 }
 
 .diff-negative {
-  color: var(--color-red);
+  color: var(--accent-red);
 }
 
 .empty-text {
@@ -1017,14 +1017,14 @@ legend {
 }
 
 .login-ok {
-  color: var(--color-green);
+  color: var(--accent-green);
   font-weight: 600;
 }
 
 .login-error {
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
-  color: var(--color-red);
+  color: var(--accent-red);
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
   font-size: 0.82rem;
@@ -1060,7 +1060,7 @@ legend {
 
 .login-help-cmd {
   font-family: var(--font-mono);
-  color: var(--text-secondary) !important;
+  color: var(--text-secondary);
 }
 
 /* ============================================================
@@ -1081,19 +1081,14 @@ legend {
 }
 
 .connection-dot.connected {
-  background: var(--color-green);
-  box-shadow: 0 0 6px var(--color-green);
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
 }
 
 .connection-dot.disconnected {
-  background: var(--color-red);
-  box-shadow: 0 0 6px var(--color-red);
+  background: var(--accent-red);
+  box-shadow: 0 0 6px var(--accent-red);
   animation: pulse-dot 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
 }
 
 .readonly-badge {

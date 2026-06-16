@@ -3,16 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { paths } from "./config.js";
 import type { ApiKey, ApiKeyPermissions, ReadingInput, TankName, TankReadingInput } from "./types.js";
-
-function localIsoNow(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const offset = -d.getTimezoneOffset();
-  const sign = offset >= 0 ? "+" : "-";
-  const oh = pad(Math.floor(Math.abs(offset) / 60));
-  const om = pad(Math.abs(offset) % 60);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}${sign}${oh}:${om}`;
-}
+import { localIsoNow } from "./util.js";
 
 export type DbReadingRow = {
   id: number;
@@ -158,7 +149,7 @@ export function insertReading(input: ReadingInput): number {
       );
     const readingId = Number(result.lastInsertRowid);
     insertTankRows(readingId, input.tanks);
-    recomputeReadingDiffs();
+    recomputeReadingDiffs(readingId);
     return readingId;
   });
   return transaction();
@@ -178,7 +169,7 @@ export function updateReading(id: number, input: ReadingInput): boolean {
     if (result.changes === 0) return false;
     db.prepare("DELETE FROM tank_readings WHERE reading_id = ?").run(id);
     insertTankRows(id, input.tanks);
-    recomputeReadingDiffs();
+    recomputeReadingDiffs(id);
     return true;
   });
   return transaction();
@@ -255,20 +246,41 @@ function calculateTotals(tanks: TankReadingInput[]): { totalLevelMm: number | nu
   };
 }
 
-function recomputeReadingDiffs(): void {
-  const rows = db
-    .prepare("SELECT id, total_level_mm, total_gsv_m3 FROM readings ORDER BY captured_at ASC, id ASC")
-    .all() as { id: number; total_level_mm: number | null; total_gsv_m3: number | null }[];
-  const update = db.prepare("UPDATE readings SET total_level_diff_mm = ?, total_gsv_diff_m3 = ? WHERE id = ?");
-  let previousLevel: number | null = null;
-  let previousGsv: number | null = null;
+function recomputeReadingDiffs(aroundId?: number): void {
+  if (aroundId != null) {
+    const allRows = db
+      .prepare("SELECT id, total_level_mm, total_gsv_m3 FROM readings ORDER BY captured_at ASC, id ASC")
+      .all() as { id: number; total_level_mm: number | null; total_gsv_m3: number | null }[];
 
-  for (const row of rows) {
-    const levelDiff = row.total_level_mm != null && previousLevel != null ? row.total_level_mm - previousLevel : null;
-    const gsvDiff = row.total_gsv_m3 != null && previousGsv != null ? row.total_gsv_m3 - previousGsv : null;
-    update.run(levelDiff, gsvDiff, row.id);
-    previousLevel = row.total_level_mm;
-    previousGsv = row.total_gsv_m3;
+    const idx = allRows.findIndex((r) => r.id === aroundId);
+    if (idx === -1) return;
+
+    const prev = idx > 0 ? allRows[idx - 1] : null;
+    const current = allRows[idx];
+    const levelDiff = current.total_level_mm != null && prev?.total_level_mm != null ? current.total_level_mm - prev.total_level_mm : null;
+    const gsvDiff = current.total_gsv_m3 != null && prev?.total_gsv_m3 != null ? current.total_gsv_m3 - prev.total_gsv_m3 : null;
+    db.prepare("UPDATE readings SET total_level_diff_mm = ?, total_gsv_diff_m3 = ? WHERE id = ?").run(levelDiff, gsvDiff, current.id);
+
+    if (idx + 1 < allRows.length) {
+      const next = allRows[idx + 1];
+      const nextLevelDiff = next.total_level_mm != null && current.total_level_mm != null ? next.total_level_mm - current.total_level_mm : null;
+      const nextGsvDiff = next.total_gsv_m3 != null && current.total_gsv_m3 != null ? next.total_gsv_m3 - current.total_gsv_m3 : null;
+      db.prepare("UPDATE readings SET total_level_diff_mm = ?, total_gsv_diff_m3 = ? WHERE id = ?").run(nextLevelDiff, nextGsvDiff, next.id);
+    }
+  } else {
+    const rows = db
+      .prepare("SELECT id, total_level_mm, total_gsv_m3 FROM readings ORDER BY captured_at ASC, id ASC")
+      .all() as { id: number; total_level_mm: number | null; total_gsv_m3: number | null }[];
+    const update = db.prepare("UPDATE readings SET total_level_diff_mm = ?, total_gsv_diff_m3 = ? WHERE id = ?");
+    let previousLevel: number | null = null;
+    let previousGsv: number | null = null;
+    for (const row of rows) {
+      const levelDiff = row.total_level_mm != null && previousLevel != null ? row.total_level_mm - previousLevel : null;
+      const gsvDiff = row.total_gsv_m3 != null && previousGsv != null ? row.total_gsv_m3 - previousGsv : null;
+      update.run(levelDiff, gsvDiff, row.id);
+      previousLevel = row.total_level_mm;
+      previousGsv = row.total_gsv_m3;
+    }
   }
 }
 

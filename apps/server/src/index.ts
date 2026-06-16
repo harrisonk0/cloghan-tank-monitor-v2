@@ -5,33 +5,32 @@ import { authenticate, clearSessionCookie, requireReadWrite, setSessionCookie } 
 import { config, paths } from "./config.js";
 import {
   deleteReading,
-  generateApiKey,
   getReading,
   getSettings,
   insertReading,
-  listApiKeys,
   listReadings,
   listRefreshRuns,
-  revokeApiKey,
   updateReading,
   updateSettings,
   validateApiKey,
 } from "./db.js";
 import { confirmRefresh, runRefresh } from "./refresh.js";
+import { ReadingInput } from "./types.js";
 import { configureScheduler, getSchedulerStatus } from "./scheduler.js";
 
 const app = Fastify({ logger: true });
 
 await app.register(cors, {
   origin: (origin, cb) => {
-    // Allow requests with no origin (curl, server-to-server, etc.)
     if (!origin) return cb(null, true);
-    // Allow ngrok tunnels
-    if (/\.ngrok(-free)?\.(dev|app)$/.test(new URL(origin).hostname)) return cb(null, true);
-    // Allow Vercel deployments
-    if (/\.vercel\.app$/.test(new URL(origin).hostname)) return cb(null, true);
-    // Allow localhost (dev)
-    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true);
+    try {
+      const hostname = new URL(origin).hostname;
+      if (/\.ngrok(-free)?\.(dev|app)$/.test(hostname)) return cb(null, true);
+      if (/\.vercel\.app$/.test(hostname)) return cb(null, true);
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true);
+    } catch {
+      // malformed origin
+    }
     cb(null, false);
   },
   credentials: true,
@@ -86,50 +85,31 @@ app.get("/api/auth", async (request, reply) => {
   return { authenticated: false };
 });
 
-// ─── Tray-only key management (used by tray.ts, no HTTP auth needed) ────────
-// These are called internally by the tray module, not exposed over HTTP.
-
-app.get("/api/keys", async () => {
-  return listApiKeys();
-});
-
-app.post("/api/keys", async (request, reply) => {
-  const { label, permissions } = (request.body ?? {}) as { label?: string; permissions?: string };
-  if (permissions !== "readonly" && permissions !== "readwrite") {
-    return reply.code(400).send({ error: "permissions must be 'readonly' or 'readwrite'." });
-  }
-  const key = generateApiKey(label ?? "", permissions);
-  return { key, permissions };
-});
-
-app.delete("/api/keys/:id", async (request, reply) => {
-  const { id } = request.params as { id: string };
-  const numId = Number(id);
-  if (!Number.isFinite(numId) || numId <= 0) {
-    return reply.code(400).send({ error: "Invalid key ID." });
-  }
-  const revoked = revokeApiKey(numId);
-  if (!revoked) return reply.code(404).send({ error: "Key not found or already revoked." });
-  return { ok: true };
-});
-
 // ─── Read-only routes ────────────────────────────────────────────────────────
 
 app.get("/api/readings", { preHandler: authenticate }, async (request) => {
   const query = request.query as { limit?: string };
-  return listReadings(query.limit ? Number(query.limit) : 200);
+  const limitParam = query.limit ? Number(query.limit) : undefined;
+  const limit = limitParam != null && Number.isFinite(limitParam) && limitParam > 0 ? Math.min(Math.floor(limitParam), 1000) : undefined;
+  return listReadings(limit ?? 200);
 });
 
 app.get("/api/readings/:id", { preHandler: authenticate }, async (request, reply) => {
   const { id } = request.params as { id: string };
-  const reading = getReading(Number(id));
+  const numId = Number(id);
+  if (!Number.isFinite(numId) || numId <= 0) {
+    return reply.code(400).send({ error: "Invalid ID." });
+  }
+  const reading = getReading(numId);
   if (!reading) return reply.code(404).send({ error: "Reading not found." });
   return reading;
 });
 
 app.get("/api/refresh-runs", { preHandler: authenticate }, async (request) => {
   const query = request.query as { limit?: string };
-  return listRefreshRuns(query.limit ? Number(query.limit) : 100);
+  const limitParam = query.limit ? Number(query.limit) : undefined;
+  const limit = limitParam != null && Number.isFinite(limitParam) && limitParam > 0 ? Math.min(Math.floor(limitParam), 1000) : undefined;
+  return listRefreshRuns(limit ?? 100);
 });
 
 app.get("/api/settings", { preHandler: authenticate }, async () => settingsResponse());
@@ -138,7 +118,7 @@ app.get("/api/settings", { preHandler: authenticate }, async () => settingsRespo
 
 app.post("/api/readings", { preHandler: requireReadWrite }, async (request, reply) => {
   try {
-    const id = insertReading(request.body as never);
+    const id = insertReading(request.body as ReadingInput);
     return reply.code(201).send(getReading(id));
   } catch (error) {
     return reply.code(400).send({ error: error instanceof Error ? error.message : "Invalid reading." });
@@ -147,10 +127,14 @@ app.post("/api/readings", { preHandler: requireReadWrite }, async (request, repl
 
 app.put("/api/readings/:id", { preHandler: requireReadWrite }, async (request, reply) => {
   const { id } = request.params as { id: string };
+  const numId = Number(id);
+  if (!Number.isFinite(numId) || numId <= 0) {
+    return reply.code(400).send({ error: "Invalid ID." });
+  }
   try {
-    const updated = updateReading(Number(id), request.body as never);
+    const updated = updateReading(numId, request.body as ReadingInput);
     if (!updated) return reply.code(404).send({ error: "Reading not found." });
-    return getReading(Number(id));
+    return getReading(numId);
   } catch (error) {
     return reply.code(400).send({ error: error instanceof Error ? error.message : "Invalid reading." });
   }
@@ -158,7 +142,11 @@ app.put("/api/readings/:id", { preHandler: requireReadWrite }, async (request, r
 
 app.delete("/api/readings/:id", { preHandler: requireReadWrite }, async (request, reply) => {
   const { id } = request.params as { id: string };
-  if (!deleteReading(Number(id))) return reply.code(404).send({ error: "Reading not found." });
+  const numId = Number(id);
+  if (!Number.isFinite(numId) || numId <= 0) {
+    return reply.code(400).send({ error: "Invalid ID." });
+  }
+  if (!deleteReading(numId)) return reply.code(404).send({ error: "Reading not found." });
   return { ok: true };
 });
 

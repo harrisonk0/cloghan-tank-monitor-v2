@@ -126,8 +126,9 @@ function updateTrayMenu(): void {
     action: () => {
       const key = generateApiKey("read-only", "readonly");
       tray?.notify("API Key Created", `Read-only key copied to clipboard.\n\n${key}`);
-      // Copy to clipboard via PowerShell
-      spawn("powershell", ["-command", `Set-Clipboard -Value '${key}'`], { windowsHide: true });
+      const ps = spawn("powershell", ["-command", "Set-Clipboard -Value $input"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
+      ps.stdin.write(key);
+      ps.stdin.end();
     },
   });
 
@@ -135,7 +136,9 @@ function updateTrayMenu(): void {
     action: () => {
       const key = generateApiKey("read-write", "readwrite");
       tray?.notify("API Key Created", `Read/write key copied to clipboard.\n\n${key}`);
-      spawn("powershell", ["-command", `Set-Clipboard -Value '${key}'`], { windowsHide: true });
+      const ps = spawn("powershell", ["-command", "Set-Clipboard -Value $input"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
+      ps.stdin.write(key);
+      ps.stdin.end();
     },
   });
 
@@ -160,7 +163,9 @@ function updateTrayMenu(): void {
     disabled: !ngrokUrl,
     action: () => {
       if (ngrokUrl) {
-        spawn("powershell", ["-command", `Set-Clipboard -Value '${ngrokUrl}'`], { windowsHide: true });
+        const ps = spawn("powershell", ["-command", "Set-Clipboard -Value $input"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
+        ps.stdin.write(ngrokUrl);
+        ps.stdin.end();
         tray?.notify("Copied", "Tunnel URL copied to clipboard.");
       }
     },
@@ -199,14 +204,8 @@ function updateTrayMenu(): void {
     copyUrl,
     sep3,
     pauseItem,
-    sep4(quit),
+    quit,
   );
-}
-
-// Helper since setMenu needs variadic args
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function sep4(quit: any): any {
-  return quit;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
