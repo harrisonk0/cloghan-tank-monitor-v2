@@ -177,23 +177,14 @@ function updateTrayMenu(): void {
   });
 
   // View logs
-  const logDir = path.resolve(import.meta.dirname ?? ".", "..", "..", "..", "runtime", "logs");
+  const logFile = path.resolve(import.meta.dirname ?? ".", "..", "..", "..", "runtime", "logs", "server.log");
   const viewLogs = tray.item("View Logs", {
     action: () => {
-      if (!fs.existsSync(logDir)) {
-        tray?.notify("No Logs", "No log files found yet.");
+      if (!fs.existsSync(logFile)) {
+        tray?.notify("No Logs", "No log file found yet.");
         return;
       }
-      const files = fs.readdirSync(logDir)
-        .filter((f) => f.endsWith(".log"))
-        .sort()
-        .reverse();
-      if (files.length === 0) {
-        tray?.notify("No Logs", "No log files found yet.");
-        return;
-      }
-      const latestLog = path.join(logDir, files[0]);
-      spawn("cmd.exe", ["/c", "start", "cmd.exe", "/k", `powershell -Command "Get-Content '${latestLog}' -Wait -Tail 50"`], {
+      spawn("cmd.exe", ["/c", "start", "cmd.exe", "/k", `powershell -Command "Get-Content '${logFile}' -Wait -Tail 50"`], {
         windowsHide: false,
         detached: true,
         stdio: "ignore",
