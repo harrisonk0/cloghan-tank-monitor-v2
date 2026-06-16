@@ -9,9 +9,9 @@ param(
     [switch]$NonInteractive
 )
 
-# This placeholder is replaced by build-installer.ps1 with a base64-encoded .env
-# when creating a pre-packaged installer. Leave empty for the standard installer.
+# These placeholders are replaced by build-installer.ps1 when creating a pre-packaged installer.
 $BakedConfig = ""
+$BakedNgrokToken = ""
 
 $ErrorActionPreference = "Stop"
 $RepoUrl = "https://github.com/harrisonk0/cloghan-tank-monitor-v2.git"
@@ -152,6 +152,26 @@ try {
 
 if ($hasAuthToken) {
     Write-Host "  ngrok already configured" -ForegroundColor Green
+} elseif ($BakedNgrokToken) {
+    $token = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($BakedNgrokToken))
+    $configured = $false
+    try {
+        $result = & cmd /c "ngrok config add-authtoken $token 2>&1" 2>$null
+        if ($LASTEXITCODE -eq 0) { $configured = $true }
+    } catch {}
+    if (-not $configured) {
+        try {
+            $ngrokDir = Join-Path $env:LOCALAPPDATA "ngrok"
+            if (-not (Test-Path $ngrokDir)) { New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null }
+            Set-Content -Path (Join-Path $ngrokDir "ngrok.yml") -Value "version: " + [char]34 + "2" + [char]34 + "`nauthtoken: $token" -Encoding UTF8
+            $configured = $true
+        } catch {}
+    }
+    if ($configured) {
+        Write-Host "  ngrok configured (pre-packaged)" -ForegroundColor Green
+    } else {
+        Write-Host "  WARNING: Could not configure ngrok." -ForegroundColor Yellow
+    }
 } elseif ($NonInteractive) {
     Write-Host "  Skipping (non-interactive)" -ForegroundColor Yellow
 } else {
@@ -200,6 +220,9 @@ try {
         Write-Host "  Dependencies installed" -ForegroundColor Green
     } else {
         Write-Host "  Dependencies up to date" -ForegroundColor Green
+        Write-Host "  Rebuilding native modules..." -ForegroundColor Yellow
+        $null = & cmd /c "cd /d `"$InstallDir`" && npm rebuild 2>&1"
+        Write-Host "  Native modules ready" -ForegroundColor Green
     }
 } catch {
     Write-Host "  ERROR: npm install failed." -ForegroundColor Red

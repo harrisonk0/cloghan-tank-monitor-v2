@@ -4,7 +4,7 @@
 # Usage:
 #   1. Configure your .env file with the desired settings
 #   2. Run: .\build-installer.ps1
-#   3. A package/ folder is created with install.ps1 + start-tray.bat
+#   3. A package/ folder is created with install.ps1
 #   4. Zip the package/ folder and share it
 #
 # The end user just extracts the zip and runs install.ps1.
@@ -16,7 +16,6 @@ $EnvPath = Join-Path $RepoRoot ".env"
 $OutputDir = Join-Path $RepoRoot "package"
 $InstallScript = Join-Path $RepoRoot "install.ps1"
 $OutputScript = Join-Path $OutputDir "install.ps1"
-$OutputBat = Join-Path $OutputDir "start-tray.bat"
 
 if (-not (Test-Path $EnvPath)) {
     Write-Host "ERROR: No .env file found at $EnvPath" -ForegroundColor Red
@@ -43,6 +42,21 @@ $script = Get-Content $InstallScript -Raw
 # Replace the empty $BakedConfig placeholder with the actual base64 value
 $script = $script -replace '\$BakedConfig = ""', "`$BakedConfig = `"$base64`""
 
+# Read ngrok auth token and inject if found
+$ngrokYml = Join-Path $env:LOCALAPPDATA "ngrok\ngrok.yml"
+$ngrokYmlAlt = Join-Path $env:USERPROFILE ".config\ngrok\ngrok.yml"
+$configFile = if (Test-Path $ngrokYml) { $ngrokYml } elseif (Test-Path $ngrokYmlAlt) { $ngrokYmlAlt } else { $null }
+if ($configFile) {
+    $ngrokConf = Get-Content $configFile -Raw
+    if ($ngrokConf -match 'authtoken:\s*(\S+)') {
+        $ngrokToken = $Matches[1]
+        $ngrokBytes = [System.Text.Encoding]::UTF8.GetBytes($ngrokToken)
+        $ngrokBase64 = [System.Convert]::ToBase64String($ngrokBytes)
+        $script = $script -replace '\$BakedNgrokToken = ""', "`$BakedNgrokToken = `"$ngrokBase64`""
+        Write-Host "  ngrok auth token found and baked in" -ForegroundColor Green
+    }
+}
+
 # Create output directory
 if (Test-Path $OutputDir) { Remove-Item -Recurse -Force $OutputDir }
 New-Item -ItemType Directory -Path $OutputDir | Out-Null
@@ -50,9 +64,9 @@ New-Item -ItemType Directory -Path $OutputDir | Out-Null
 # Write the packaged install script
 Set-Content -Path $OutputScript -Value $script -Encoding UTF8
 
-# Copy start-tray.bat and VBS silent launcher
-Copy-Item (Join-Path $RepoRoot "start-tray.bat") $OutputBat
-Copy-Item (Join-Path $RepoRoot "start-tray-silent.vbs") (Join-Path $OutputDir "start-tray-silent.vbs")
+# Write a bat launcher so users can just double-click
+$batContent = "@echo off`r`npowershell -ExecutionPolicy Bypass -File `"%~dp0install.ps1`""
+Set-Content -Path (Join-Path $OutputDir "Install.bat") -Value $batContent -Encoding ASCII
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
@@ -62,14 +76,13 @@ Write-Host ""
 Write-Host "  Location: $OutputDir" -ForegroundColor White
 Write-Host ""
 Write-Host "  Contents:" -ForegroundColor White
-Write-Host "    install.ps1          (pre-configured installer)" -ForegroundColor Gray
-Write-Host "    start-tray.bat       (app launcher - console)" -ForegroundColor Gray
-Write-Host "    start-tray-silent.vbs (app launcher - silent)" -ForegroundColor Gray
+Write-Host "    Install.bat  (double-click to install)" -ForegroundColor Gray
+Write-Host "    install.ps1  (pre-configured installer)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  To share:" -ForegroundColor White
 Write-Host "    1. Zip the package/ folder" -ForegroundColor Gray
 Write-Host "    2. Send the zip to the user" -ForegroundColor Gray
-Write-Host "    3. They extract and double-click install.ps1" -ForegroundColor Gray
+Write-Host "    3. They extract and double-click Install.bat" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  Config is base64-encoded (not plaintext), but" -ForegroundColor Yellow
 Write-Host "  not encryption - anyone can decode it." -ForegroundColor Yellow
