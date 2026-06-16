@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import Tray from "trayicon";
 import { generateApiKey, listApiKeys, revokeApiKey } from "./db.js";
@@ -184,11 +185,12 @@ function updateTrayMenu(): void {
         tray?.notify("No Logs", "No log file found yet.");
         return;
       }
-      spawn("cmd.exe", ["/c", "start", "cmd.exe", "/k", `powershell -Command "Get-Content '${logFile}' -Wait -Tail 50"`], {
+      const ps = spawn("powershell.exe", ["-NoExit", "-Command", `Get-Content '${logFile}' -Wait -Tail 50`], {
         windowsHide: false,
         detached: true,
         stdio: "ignore",
-      }).unref();
+      });
+      ps.unref();
     },
   });
 
@@ -216,10 +218,31 @@ function updateTrayMenu(): void {
   );
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function isPortInUse(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = net.createServer()
+      .once("error", () => resolve(true))
+      .once("listening", () => { tester.close(() => resolve(false)); })
+      .listen(port, "127.0.0.1");
+  });
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function initTray(): Promise<void> {
-  // Start the server first
+  const port = getServerStatus().port;
+  const portTaken = await isPortInUse(port);
+
+  if (portTaken) {
+    const iconBuffer = (() => { try { return fs.readFileSync(ICON_PATH); } catch { return undefined; } })();
+    const tmp = await Tray.create({ icon: iconBuffer, title: "CTM" });
+    tmp?.notify("Cloghan Tank Monitor", "Server is already running. Check the system tray.");
+    tmp?.kill();
+    process.exit(0);
+  }
+
   startServer();
 
   // Create tray
@@ -240,6 +263,7 @@ export async function initTray(): Promise<void> {
   // Start ngrok
   startNgrok();
 
+  tray?.notify("Cloghan Tank Monitor", "Server started");
   console.log("[tray] System tray initialized");
 }
 
