@@ -2,11 +2,12 @@
 # Run from GitHub:
 #   irm https://raw.githubusercontent.com/harrisonk0/cloghan-tank-monitor-v2/main/install.ps1 | iex
 #
-# Or download the repo and run Install.bat
+# Or download the repo and run install.ps1
 
 $ErrorActionPreference = "Stop"
 $RepoUrl = "https://github.com/harrisonk0/cloghan-tank-monitor-v2.git"
 $InstallDir = Join-Path $env:USERPROFILE "CloghanTankMonitor"
+$EnvPath = Join-Path $InstallDir ".env"
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
@@ -14,79 +15,126 @@ Write-Host "  Cloghan Tank Monitor v2 - Installer" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ─── Step 1: Check/Install Node.js ───
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
-Write-Host "[1/8] Checking Node.js..." -ForegroundColor Yellow
-
-$nodeInstalled = $false
-try {
-    $nodeVersion = node --version 2>$null
-    if ($nodeVersion) {
-        Write-Host "  Node.js $nodeVersion found" -ForegroundColor Green
-        $nodeInstalled = $true
-    }
-} catch {}
-
-if (-not $nodeInstalled) {
-    Write-Host "  Installing Node.js via winget..." -ForegroundColor Yellow
+function Test-Prereq($name, $checkCmd) {
     try {
-        winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
+        $result = & cmd /c "$checkCmd --version 2>&1"
+        if ($LASTEXITCODE -eq 0 -and $result) {
+            Write-Host "  $name found" -ForegroundColor Green
+            return $true
+        }
+    } catch {}
+    return $false
+}
+
+function Install-Prereq($name, $wingetId) {
+    Write-Host "  Installing $name via winget..." -ForegroundColor Yellow
+    try {
+        winget install $wingetId --accept-package-agreements --accept-source-agreements
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-        Write-Host "  Node.js installed" -ForegroundColor Green
+        Write-Host "  $name installed" -ForegroundColor Green
+        return $true
     } catch {
-        Write-Host "  ERROR: Failed to install Node.js. Install manually from https://nodejs.org" -ForegroundColor Red
+        Write-Host "  ERROR: Failed to install $name." -ForegroundColor Red
+        Write-Host "  Install manually and re-run this script." -ForegroundColor Red
+        return $false
+    }
+}
+
+# ─── Step 1: Check/Install Node.js ───────────────────────────────────────────
+
+Write-Host "[1/7] Checking Node.js..." -ForegroundColor Yellow
+
+if (-not (Test-Prereq "Node.js" "node")) {
+    if (-not (Install-Prereq "Node.js" "OpenJS.NodeJS.LTS")) {
         Read-Host "Press Enter to exit"
         exit 1
     }
 }
 
-# ─── Step 2: Check/Install Git ───
+# ─── Step 2: Check/Install Git ───────────────────────────────────────────────
 
-Write-Host "[2/8] Checking Git..." -ForegroundColor Yellow
+Write-Host "[2/7] Checking Git..." -ForegroundColor Yellow
 
-$gitInstalled = $false
-try { $gitVersion = git --version 2>$null; if ($gitVersion) { Write-Host "  $gitVersion found" -ForegroundColor Green; $gitInstalled = $true } } catch {}
-
-if (-not $gitInstalled) {
-    Write-Host "  Installing Git via winget..." -ForegroundColor Yellow
-    try {
-        winget install Git.Git --accept-package-agreements --accept-source-agreements
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-        Write-Host "  Git installed" -ForegroundColor Green
-    } catch { Write-Host "  ERROR: Failed to install Git." -ForegroundColor Red; Read-Host "Press Enter to exit"; exit 1 }
+if (-not (Test-Prereq "Git" "git")) {
+    if (-not (Install-Prereq "Git" "Git.Git")) {
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
 }
 
-# ─── Step 3: Check/Install ngrok ───
+# ─── Step 3: Check/Install ngrok ─────────────────────────────────────────────
 
-Write-Host "[3/8] Checking ngrok..." -ForegroundColor Yellow
+Write-Host "[3/7] Checking ngrok..." -ForegroundColor Yellow
 
-$ngrokInstalled = $false
-try { $ngrokVersion = ngrok --version 2>$null; if ($ngrokVersion) { Write-Host "  ngrok found" -ForegroundColor Green; $ngrokInstalled = $true } } catch {}
-
-if (-not $ngrokInstalled) {
-    Write-Host "  Installing ngrok via winget..." -ForegroundColor Yellow
-    try {
-        winget install Ngrok.Ngrok --accept-package-agreements --accept-source-agreements
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-        Write-Host "  ngrok installed" -ForegroundColor Green
-    } catch { Write-Host "  WARNING: Failed to install ngrok." -ForegroundColor Yellow }
+$ngrokAvailable = Test-Prereq "ngrok" "ngrok"
+if (-not $ngrokAvailable) {
+    Install-Prereq "ngrok" "Ngrok.Ngrok" | Out-Null
 }
-
 try { ngrok update 2>&1 | Out-Null } catch {}
 
-# ─── Step 4: Clone the repository ───
+# ─── Step 4: Clone or update the repository ───────────────────────────────────
 
-Write-Host "[4/8] Downloading Cloghan Tank Monitor..." -ForegroundColor Yellow
+Write-Host "[4/7] Downloading Cloghan Tank Monitor..." -ForegroundColor Yellow
+
+$isUpgrade = $false
 
 if (Test-Path $InstallDir) {
-    Write-Host "  Found existing install at $InstallDir" -ForegroundColor Green
-    Push-Location $InstallDir
-    try {
-        git pull --quiet 2>$null
-        Write-Host "  Updated to latest version" -ForegroundColor Green
-    } catch { Write-Host "  Using existing version" -ForegroundColor Yellow }
-    Pop-Location
-} else {
+    # Existing install — check if it's valid
+    $isV2 = Test-Path (Join-Path $InstallDir "apps")
+    $hasGit = Test-Path (Join-Path $InstallDir ".git")
+    $hasEnv = Test-Path $EnvPath
+    $hasNodeModules = Test-Path (Join-Path $InstallDir "node_modules")
+
+    if (-not $hasGit) {
+        Write-Host "  Existing folder found but it is not a git repo." -ForegroundColor Yellow
+        $confirm = Read-Host "  Remove it and do a fresh install? (Y/n)"
+        if ($confirm -ne "n") {
+            Remove-Item -Recurse -Force $InstallDir
+        } else {
+            Write-Host "  Cannot upgrade without a git repo. Exiting." -ForegroundColor Red
+            Read-Host "Press Enter to exit"
+            exit 1
+        }
+    } elseif (-not $isV2) {
+        Write-Host "  Found a v1 install (no apps/ directory)." -ForegroundColor Yellow
+        Write-Host "  Upgrading to v2..." -ForegroundColor Yellow
+        Push-Location $InstallDir
+        try {
+            git fetch origin --quiet
+            git checkout main --quiet 2>$null
+            git reset --hard origin/main --quiet 2>$null
+            $isUpgrade = $true
+            Write-Host "  Upgraded to v2" -ForegroundColor Green
+        } catch {
+            Write-Host "  WARNING: Could not auto-upgrade. Re-cloning..." -ForegroundColor Yellow
+            Pop-Location
+            Remove-Item -Recurse -Force $InstallDir
+        }
+        Pop-Location
+    } else {
+        # Valid v2 install — pull latest
+        Write-Host "  Found existing install at $InstallDir" -ForegroundColor Green
+        Push-Location $InstallDir
+        try {
+            $before = git rev-parse HEAD 2>$null
+            git pull --quiet 2>$null
+            $after = git rev-parse HEAD 2>$null
+            if ($before -ne $after) {
+                $isUpgrade = $true
+                Write-Host "  Updated to latest version" -ForegroundColor Green
+            } else {
+                Write-Host "  Already up to date" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "  Using existing version (update failed)" -ForegroundColor Yellow
+        }
+        Pop-Location
+    }
+}
+
+if (-not (Test-Path $InstallDir)) {
     try {
         git clone --quiet $RepoUrl $InstallDir
         Write-Host "  Downloaded to $InstallDir" -ForegroundColor Green
@@ -97,56 +145,52 @@ if (Test-Path $InstallDir) {
     }
 }
 
-# ─── Step 5: Prompt for API Keys ───
+# ─── Step 5: Configure ngrok ─────────────────────────────────────────────────
 
-Write-Host "[5/8] Configuring API keys..." -ForegroundColor Yellow
-Write-Host ""
+Write-Host "[5/7] Configuring ngrok..." -ForegroundColor Yellow
 
-$ngrokAuthToken = Read-Host "  Enter your ngrok auth token (from https://dashboard.ngrok.com/get-started/your-authtoken)"
-if ([string]::IsNullOrWhiteSpace($ngrokAuthToken)) {
-    Write-Host "  WARNING: ngrok auth token not provided. Tunnel will not work." -ForegroundColor Yellow
+$existingNgrokToken = ""
+try {
+    $ngrokConfig = ngrok config check 2>&1 | Out-String
+    # Just check if authtoken is already set — don't re-prompt if it is
+} catch {}
+
+$ngrokAuthToken = $null
+try {
+    $authtoken = (ngrok config get authtoken 2>$null | Out-String).Trim()
+    if ($authtoken) {
+        Write-Host "  ngrok auth token already configured" -ForegroundColor Green
+    }
+} catch {}
+
+if (-not $authtoken) {
+    $ngrokAuthToken = Read-Host "  Enter your ngrok auth token (from https://dashboard.ngrok.com/get-started/your-authtoken)"
+    if (-not [string]::IsNullOrWhiteSpace($ngrokAuthToken)) {
+        try {
+            ngrok config add-authtoken $ngrokAuthToken 2>$null
+            Write-Host "  ngrok configured" -ForegroundColor Green
+        } catch {
+            Write-Host "  WARNING: Could not configure ngrok." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  No auth token provided. Tunnel will not work until configured." -ForegroundColor Yellow
+    }
 }
 
-$openaiApiKey = Read-Host "  Enter your OpenAI API key (or compatible endpoint key)"
-if ([string]::IsNullOrWhiteSpace($openaiApiKey)) {
-    Write-Host "  ERROR: OpenAI API key is required." -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
-}
+# ─── Step 6: Install npm dependencies ────────────────────────────────────────
 
-$openaiBaseUrl = Read-Host "  Enter AI base URL (press Enter for https://api.openai.com/v1)"
-if ([string]::IsNullOrWhiteSpace($openaiBaseUrl)) { $openaiBaseUrl = "https://api.openai.com/v1" }
-
-$appApiKey = Read-Host "  Enter a password for the web dashboard (press Enter to generate one)"
-if ([string]::IsNullOrWhiteSpace($appApiKey)) {
-    $appApiKey = -join ((1..24) | ForEach-Object { '{0:X}' -f (Get-Random -Max 16) })
-    Write-Host "  Generated dashboard password: $appApiKey" -ForegroundColor Cyan
-}
-
-Write-Host ""
-
-# ─── Step 6: Configure ngrok ───
-
-Write-Host "[6/8] Configuring ngrok..." -ForegroundColor Yellow
-
-if (-not [string]::IsNullOrWhiteSpace($ngrokAuthToken)) {
-    try {
-        ngrok config add-authtoken $ngrokAuthToken 2>$null
-        Write-Host "  ngrok configured" -ForegroundColor Green
-    } catch { Write-Host "  WARNING: Could not configure ngrok." -ForegroundColor Yellow }
-} else {
-    Write-Host "  Skipping (no auth token provided)" -ForegroundColor Yellow
-}
-
-# ─── Step 7: Install npm dependencies ───
-
-Write-Host "[7/8] Installing npm dependencies..." -ForegroundColor Yellow
+Write-Host "[6/7] Installing dependencies..." -ForegroundColor Yellow
 
 Push-Location $InstallDir
 try {
-    npm install --production=false
-    if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-    Write-Host "  Dependencies installed" -ForegroundColor Green
+    $needsInstall = $isUpgrade -or (-not (Test-Path (Join-Path $InstallDir "node_modules")))
+    if ($needsInstall) {
+        npm install --production=false 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+        Write-Host "  Dependencies installed" -ForegroundColor Green
+    } else {
+        Write-Host "  Dependencies already installed" -ForegroundColor Green
+    }
 } catch {
     Write-Host "  ERROR: npm install failed." -ForegroundColor Red
     Pop-Location
@@ -154,24 +198,49 @@ try {
     exit 1
 } finally { Pop-Location }
 
-# ─── Step 8: Create .env and shortcuts ───
+# ─── Step 7: Configure .env and create shortcuts ─────────────────────────────
 
-Write-Host "[8/8] Creating config and shortcuts..." -ForegroundColor Yellow
+Write-Host "[7/7] Creating config and shortcuts..." -ForegroundColor Yellow
 
-$envContent = @"
+# Prompt for AI API key
+$openaiApiKey = $null
+$openaiBaseUrl = $null
+
+if (-not (Test-Path $EnvPath)) {
+    # Fresh install — prompt for AI config
+    Write-Host ""
+    Write-Host "  AI Configuration:" -ForegroundColor Cyan
+
+    $openaiApiKey = Read-Host "  Enter your OpenAI API key (or compatible endpoint key)"
+    if ([string]::IsNullOrWhiteSpace($openaiApiKey)) {
+        Write-Host "  ERROR: OpenAI API key is required." -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+
+    $openaiBaseUrl = Read-Host "  Enter AI base URL (press Enter for https://api.openai.com/v1)"
+    if ([string]::IsNullOrWhiteSpace($openaiBaseUrl)) { $openaiBaseUrl = "https://api.openai.com/v1" }
+
+    Write-Host ""
+} else {
+    Write-Host "  Existing .env found — preserving your settings" -ForegroundColor Green
+}
+
+# Write .env only for fresh installs (never overwrite existing config)
+if (-not (Test-Path $EnvPath)) {
+    $envContent = @"
 PORT=3000
 AI_BASE_URL=$openaiBaseUrl
 AI_API_KEY=$openaiApiKey
 AI_MODEL=gpt-4o-mini
 AI_CONFIDENCE_THRESHOLD=0.85
 SCREENSHOT_SUCCESS_RETENTION_HOURS=3
-API_KEY=$appApiKey
 "@
+    Set-Content -Path $EnvPath -Value $envContent -Encoding UTF8
+    Write-Host "  .env created" -ForegroundColor Green
+}
 
-$envPath = Join-Path $InstallDir ".env"
-Set-Content -Path $envPath -Value $envContent -Encoding UTF8
-Write-Host "  .env created" -ForegroundColor Green
-
+# Create shortcuts
 $WshShell = New-Object -ComObject WScript.Shell
 
 $desktopPath = [System.Environment]::GetFolderPath("Desktop")
@@ -195,7 +264,7 @@ $startupShortcut.WindowStyle = 7
 $startupShortcut.Save()
 Write-Host "  Startup shortcut created (auto-start on boot)" -ForegroundColor Green
 
-# ─── Done ───
+# ─── Done ────────────────────────────────────────────────────────────────────
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
@@ -203,44 +272,26 @@ Write-Host "  Installation Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Installed to: $InstallDir" -ForegroundColor White
-Write-Host "  Dashboard password: $appApiKey" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  To start the app:" -ForegroundColor White
-Write-Host "    - Double-click 'Cloghan Tank Monitor' on your Desktop" -ForegroundColor White
-Write-Host "    - Or restart your computer (it auto-starts)" -ForegroundColor White
-Write-Host ""
-Write-Host "  Local dashboard: http://localhost:5173" -ForegroundColor White
+Write-Host "  To start:" -ForegroundColor White
+Write-Host "    Double-click 'Cloghan Tank Monitor' on your Desktop" -ForegroundColor White
+Write-Host "    (or restart your computer — it auto-starts)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Pair with the Vercel Dashboard" -ForegroundColor Cyan
+Write-Host "  Connect to the Web Dashboard" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  The web dashboard is also hosted at:" -ForegroundColor White
-Write-Host "    https://cloghan-tm.vercel.app" -ForegroundColor Yellow
+Write-Host "  Open https://cloghan-tm.vercel.app in any browser" -ForegroundColor White
 Write-Host ""
-Write-Host "  To connect it to this PC:" -ForegroundColor White
+Write-Host "  Then right-click the tray icon and select:" -ForegroundColor White
 Write-Host ""
-Write-Host "  1. Start the app (double-click the desktop shortcut)" -ForegroundColor White
-Write-Host "     The tray icon appears in your system tray (bottom-right)" -ForegroundColor Gray
+Write-Host "    Copy Magic Link (Read/Write)" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  2. Right-click the tray icon and select 'Copy Tunnel URL'" -ForegroundColor White
-Write-Host "     This copies the ngrok URL (e.g. https://xxxx.ngrok-free.app)" -ForegroundColor Gray
+Write-Host "  Paste the link into your browser — you're logged in!" -ForegroundColor White
+Write-Host "  No need to enter URLs or keys manually." -ForegroundColor Gray
 Write-Host ""
-Write-Host "  3. Right-click the tray icon again and select" -ForegroundColor White
-Write-Host "     'Generate Read/Write API Key'" -ForegroundColor White
-Write-Host "     The key is copied to your clipboard automatically" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  4. Open https://cloghan-tm.vercel.app in your browser" -ForegroundColor White
-Write-Host ""
-Write-Host "  5. Paste the Tunnel URL when prompted for 'Server URL'" -ForegroundColor White
-Write-Host "     Click 'Test Connection' to verify" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  6. Paste the API Key when prompted" -ForegroundColor White
-Write-Host "     Click 'Connect' to access the dashboard" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  You only need to do this once - the dashboard remembers" -ForegroundColor White
-Write-Host "  your connection. Generate new keys from the tray menu" -ForegroundColor White
-Write-Host "  anytime you want to connect from another device." -ForegroundColor White
+Write-Host "  To connect from another device, generate another" -ForegroundColor White
+Write-Host "  magic link from the tray menu." -ForegroundColor White
 Write-Host ""
 
 Read-Host "Press Enter to exit"

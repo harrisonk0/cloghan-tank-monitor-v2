@@ -13,10 +13,12 @@ irm https://raw.githubusercontent.com/harrisonk0/cloghan-tank-monitor-v2/main/in
 ```
 
 This downloads and runs the installer, which:
-1. Installs Node.js and ngrok (via winget)
-2. Prompts for your API keys
+1. Installs Node.js, Git, and ngrok (via winget)
+2. Prompts for your AI API key
 3. Installs dependencies
 4. Creates desktop and startup shortcuts
+
+The installer detects existing installs and preserves your settings.
 
 ## Manual Install
 
