@@ -3,6 +3,11 @@
 #   irm https://raw.githubusercontent.com/harrisonk0/cloghan-tank-monitor-v2/main/install.ps1 | iex
 #
 # Re-running this script will update an existing install to the latest version.
+# Pass -NonInteractive to skip prompts (uses existing .env, skips ngrok token).
+
+param(
+    [switch]$NonInteractive
+)
 
 $ErrorActionPreference = "Stop"
 $RepoUrl = "https://github.com/harrisonk0/cloghan-tank-monitor-v2.git"
@@ -12,10 +17,11 @@ $EnvPath = Join-Path $InstallDir ".env"
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Cloghan Tank Monitor v2" -ForegroundColor Cyan
+if ($NonInteractive) { Write-Host "  (non-interactive mode)" -ForegroundColor DarkGray }
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# --- Helpers ---
 
 function Test-Command($name, $cmd) {
     try {
@@ -41,19 +47,21 @@ function Install-Winget($name, $id) {
     }
 }
 
-# ─── Step 1: Check/Install prerequisites ─────────────────────────────────────
+# --- Step 1: Check/Install prerequisites ---
 
 Write-Host "[1/5] Checking prerequisites..." -ForegroundColor Yellow
 
 if (-not (Test-Command "Node.js" "node")) {
     if (-not (Install-Winget "Node.js" "OpenJS.NodeJS.LTS")) {
-        Read-Host "Press Enter to exit"; exit 1
+        if (-not $NonInteractive) { Read-Host "Press Enter to exit" }
+        exit 1
     }
 }
 
 if (-not (Test-Command "Git" "git")) {
     if (-not (Install-Winget "Git" "Git.Git")) {
-        Read-Host "Press Enter to exit"; exit 1
+        if (-not $NonInteractive) { Read-Host "Press Enter to exit" }
+        exit 1
     }
 }
 
@@ -62,7 +70,7 @@ if (-not (Test-Command "ngrok" "ngrok")) {
 }
 try { ngrok update 2>&1 | Out-Null } catch {}
 
-# ─── Step 2: Clone or update the repository ───────────────────────────────────
+# --- Step 2: Clone or update the repository ---
 
 Write-Host "[2/5] Getting latest code..." -ForegroundColor Yellow
 
@@ -73,25 +81,32 @@ if (Test-Path $InstallDir) {
 
     if (-not $hasGit) {
         Write-Host "  Found a folder at $InstallDir but it is not a git repo." -ForegroundColor Yellow
-        $confirm = Read-Host "  Remove it and do a fresh install? (Y/n)"
-        if ($confirm -ne "n") {
+        if ($NonInteractive) {
+            Write-Host "  Removing and re-cloning..." -ForegroundColor Yellow
             Remove-Item -Recurse -Force $InstallDir
         } else {
-            Write-Host "  Cannot update without a git repo. Exiting." -ForegroundColor Red
-            Read-Host "Press Enter to exit"; exit 1
+            $confirm = Read-Host "  Remove it and do a fresh install? (Y/n)"
+            if ($confirm -ne "n") {
+                Remove-Item -Recurse -Force $InstallDir
+            } else {
+                Write-Host "  Cannot update without a git repo. Exiting." -ForegroundColor Red
+                Read-Host "Press Enter to exit"; exit 1
+            }
         }
     } else {
         Push-Location $InstallDir
         try {
             $before = (git rev-parse HEAD 2>$null).Trim()
+            $savedInstallHash = if (Test-Path (Join-Path $InstallDir ".install-hash")) { Get-Content (Join-Path $InstallDir ".install-hash") -Raw } else { $null }
             git fetch origin --quiet 2>$null
             git reset --hard origin/main --quiet 2>$null
             git clean -fd --quiet 2>$null
+            if ($null -ne $savedInstallHash) { Set-Content -Path (Join-Path $InstallDir ".install-hash") -Value $savedInstallHash -NoNewline }
             $after = (git rev-parse HEAD 2>$null).Trim()
 
             if ($before -ne $after) {
                 $commits = (git log --oneline "$before..$after" 2>$null | Measure-Object).Count
-                Write-Host "  Updated ($commits new commit$(if ($commits -ne 1) { 's' }))" -ForegroundColor Green
+                Write-Host "  Updated ($commits new commits)" -ForegroundColor Green
             } else {
                 Write-Host "  Already up to date" -ForegroundColor Green
             }
@@ -109,11 +124,12 @@ if (-not (Test-Path $InstallDir)) {
         Write-Host "  Downloaded to $InstallDir" -ForegroundColor Green
     } catch {
         Write-Host "  ERROR: Failed to download. Check your internet connection." -ForegroundColor Red
-        Read-Host "Press Enter to exit"; exit 1
+        if (-not $NonInteractive) { Read-Host "Press Enter to exit" }
+        exit 1
     }
 }
 
-# ─── Step 3: Configure ngrok (first install only) ────────────────────────────
+# --- Step 3: Configure ngrok (first install only) ---
 
 Write-Host "[3/5] Checking ngrok..." -ForegroundColor Yellow
 
@@ -127,6 +143,8 @@ try {
 
 if ($hasAuthToken) {
     Write-Host "  ngrok already configured" -ForegroundColor Green
+} elseif ($NonInteractive) {
+    Write-Host "  Skipping (non-interactive)" -ForegroundColor Yellow
 } else {
     $token = Read-Host "  Enter your ngrok auth token (from https://dashboard.ngrok.com/get-started/your-authtoken)"
     if (-not [string]::IsNullOrWhiteSpace($token)) {
@@ -141,7 +159,7 @@ if ($hasAuthToken) {
     }
 }
 
-# ─── Step 4: Install npm dependencies ────────────────────────────────────────
+# --- Step 4: Install npm dependencies ---
 
 Write-Host "[4/5] Installing dependencies..." -ForegroundColor Yellow
 
@@ -151,18 +169,13 @@ try {
     $pkgHash = if (Test-Path (Join-Path $InstallDir "package.json")) {
         (Get-FileHash (Join-Path $InstallDir "package.json") -Algorithm MD5).Hash
     } else { "" }
-    $lockHash = if (Test-Path (Join-Path $InstallDir "package-lock.json")) {
-        (Get-FileHash (Join-Path $InstallDir "package-lock.json") -Algorithm MD5).Hash
-    } else { "" }
     $hashFile = Join-Path $InstallDir ".install-hash"
     $savedHash = if (Test-Path $hashFile) { (Get-Content $hashFile -Raw).Trim() } else { "" }
-    $currentHash = "$pkgHash|$lockHash"
 
-    if (-not $nodeModulesExists -or $currentHash -ne $savedHash) {
+    if (-not $nodeModulesExists -or $pkgHash -ne $savedHash) {
         Write-Host "  Installing..." -ForegroundColor Yellow
-        npm install --production=false 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-        Set-Content -Path $hashFile -Value $currentHash -NoNewline
+        $null = & cmd /c "cd /d `"$InstallDir`" && npm install 2>&1"
+        Set-Content -Path $hashFile -Value $pkgHash -NoNewline
         Write-Host "  Dependencies installed" -ForegroundColor Green
     } else {
         Write-Host "  Dependencies up to date" -ForegroundColor Green
@@ -170,38 +183,55 @@ try {
 } catch {
     Write-Host "  ERROR: npm install failed." -ForegroundColor Red
     Pop-Location
-    Read-Host "Press Enter to exit"; exit 1
+    if (-not $NonInteractive) { Read-Host "Press Enter to exit" }
+    exit 1
 } finally { Pop-Location }
 
-# ─── Step 5: Configure .env and create shortcuts ─────────────────────────────
+# --- Step 5: Configure .env and create shortcuts ---
 
 Write-Host "[5/5] Setting up..." -ForegroundColor Yellow
 
 if (-not (Test-Path $EnvPath)) {
-    Write-Host ""
-    Write-Host "  First install — AI configuration:" -ForegroundColor Cyan
+    if ($NonInteractive) {
+        Write-Host "  No .env found - using defaults (AI_API_KEY not set)" -ForegroundColor Yellow
+        $lines = @(
+            "PORT=3000",
+            "AI_BASE_URL=https://api.openai.com/v1",
+            "AI_API_KEY=replace-me",
+            "AI_MODEL=gpt-4o-mini",
+            "AI_CONFIDENCE_THRESHOLD=0.85",
+            "SCREENSHOT_SUCCESS_RETENTION_HOURS=3"
+        )
+        $envContent = $lines -join "`n"
+        Set-Content -Path $EnvPath -Value $envContent -Encoding UTF8
+        Write-Host "  .env created with defaults" -ForegroundColor Green
+    } else {
+        Write-Host ""
+        Write-Host "  First install - AI configuration:" -ForegroundColor Cyan
 
-    $apiKey = Read-Host "  Enter your OpenAI API key (or compatible endpoint key)"
-    if ([string]::IsNullOrWhiteSpace($apiKey)) {
-        Write-Host "  ERROR: API key is required." -ForegroundColor Red
-        Read-Host "Press Enter to exit"; exit 1
+        $apiKey = Read-Host "  Enter your OpenAI API key (or compatible endpoint key)"
+        if ([string]::IsNullOrWhiteSpace($apiKey)) {
+            Write-Host "  ERROR: API key is required." -ForegroundColor Red
+            Read-Host "Press Enter to exit"; exit 1
+        }
+
+        $baseUrl = Read-Host "  Enter AI base URL (press Enter for https://api.openai.com/v1)"
+        if ([string]::IsNullOrWhiteSpace($baseUrl)) { $baseUrl = "https://api.openai.com/v1" }
+
+        $lines = @(
+            "PORT=3000",
+            "AI_BASE_URL=$baseUrl",
+            "AI_API_KEY=$apiKey",
+            "AI_MODEL=gpt-4o-mini",
+            "AI_CONFIDENCE_THRESHOLD=0.85",
+            "SCREENSHOT_SUCCESS_RETENTION_HOURS=3"
+        )
+        $envContent = $lines -join "`n"
+        Set-Content -Path $EnvPath -Value $envContent -Encoding UTF8
+        Write-Host "  .env created" -ForegroundColor Green
     }
-
-    $baseUrl = Read-Host "  Enter AI base URL (press Enter for https://api.openai.com/v1)"
-    if ([string]::IsNullOrWhiteSpace($baseUrl)) { $baseUrl = "https://api.openai.com/v1" }
-
-    $envContent = @"
-PORT=3000
-AI_BASE_URL=$baseUrl
-AI_API_KEY=$apiKey
-AI_MODEL=gpt-4o-mini
-AI_CONFIDENCE_THRESHOLD=0.85
-SCREENSHOT_SUCCESS_RETENTION_HOURS=3
-"@
-    Set-Content -Path $EnvPath -Value $envContent -Encoding UTF8
-    Write-Host "  .env created" -ForegroundColor Green
 } else {
-    Write-Host "  Existing .env found — preserving your settings" -ForegroundColor Green
+    Write-Host "  Existing .env found - preserving your settings" -ForegroundColor Green
 }
 
 # Shortcuts
@@ -226,11 +256,12 @@ $slnk.Save()
 
 Write-Host "  Shortcuts updated" -ForegroundColor Green
 
-# ─── Done ────────────────────────────────────────────────────────────────────
+# --- Done ---
 
+$action = if ($isFreshInstall) { "Installed" } else { "Updated" }
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "  $(if ($isFreshInstall) { 'Installed' } else { 'Updated' })!" -ForegroundColor Green
+Write-Host "  $action!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Location: $InstallDir" -ForegroundColor White
@@ -245,7 +276,7 @@ Write-Host "  1. Start the app (desktop shortcut)" -ForegroundColor White
 Write-Host "  2. Right-click tray icon > Copy Magic Link (Read/Write)" -ForegroundColor White
 Write-Host "  3. Paste the link into https://cloghan-tm.vercel.app" -ForegroundColor White
 Write-Host ""
-Write-Host "  That's it — you're logged in." -ForegroundColor Gray
+Write-Host "  That is it - you are logged in." -ForegroundColor Gray
 Write-Host ""
 
-Read-Host "Press Enter to exit"
+if (-not $NonInteractive) { Read-Host "Press Enter to exit" }
