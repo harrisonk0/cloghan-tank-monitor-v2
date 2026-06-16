@@ -151,11 +151,18 @@ function updateTrayMenu(): void {
   // View keys submenu
   const keys = listApiKeys();
   const viewKeysItems = keys.length
-    ? keys.map((k) =>
-        tray!.item(`${k.label ?? "unnamed"} (${k.permissions}) - ${k.created_at}`, {
-          disabled: true,
-        }),
-      )
+    ? keys.map((k) => {
+        const item = tray!.item(`${k.label ?? "unnamed"} (${k.permissions}) - ${k.created_at}`);
+        const revoke = tray!.item("Revoke", {
+          action: () => {
+            revokeApiKey(k.id);
+            tray?.notify("Key Revoked", `Key "${k.label ?? "unnamed"}" has been revoked.`);
+            updateTrayMenu();
+          },
+        });
+        item.add(revoke);
+        return item;
+      })
     : [tray.item("(no active keys)", { disabled: true })];
 
   const viewKeys = tray.item("View Active API Keys");
