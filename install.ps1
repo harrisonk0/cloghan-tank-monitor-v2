@@ -139,9 +139,14 @@ Write-Host "[3/5] Checking ngrok..." -ForegroundColor Yellow
 
 $hasAuthToken = $false
 try {
-    $out = (ngrok config get authtoken 2>&1 | Out-String).Trim()
-    if ($out -and $out -notmatch "not found" -and $out -notmatch "error") {
-        $hasAuthToken = $true
+    $ngrokYml = Join-Path $env:LOCALAPPDATA "ngrok\ngrok.yml"
+    $ngrokYmlAlt = Join-Path $env:USERPROFILE ".config\ngrok\ngrok.yml"
+    $configFile = if (Test-Path $ngrokYml) { $ngrokYml } elseif (Test-Path $ngrokYmlAlt) { $ngrokYmlAlt } else { $null }
+    if ($configFile) {
+        $conf = Get-Content $configFile -Raw
+        if ($conf -match 'authtoken:\s*\S') {
+            $hasAuthToken = $true
+        }
     }
 } catch {}
 
