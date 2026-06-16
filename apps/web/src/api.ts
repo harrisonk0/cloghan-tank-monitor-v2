@@ -1,5 +1,24 @@
 import type { Permissions } from "./types.js";
 
+export function parseMagicLink(): { serverUrl: string; apiKey: string } | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (!token) return null;
+    const json = JSON.parse(atob(token.replace(/-/g, "+").replace(/_/g, "/")));
+    if (typeof json.s === "string" && typeof json.k === "string" && json.s && json.k) {
+      const url = new URL(json.s);
+      if (url.protocol === "https:" || url.protocol === "http:") {
+        window.history.replaceState({}, "", window.location.pathname);
+        return { serverUrl: json.s.replace(/\/+$/, ""), apiKey: json.k };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function getServerUrl(): string {
   return localStorage.getItem("serverUrl") ?? "";
 }

@@ -121,25 +121,31 @@ function updateTrayMenu(): void {
   const serverStatus = status.running ? `running on :${status.port}` : "stopped";
   const tunnelStatus = ngrokUrl ?? "not connected";
 
-  // Key generation items
-  const genReadOnly = tray.item("Generate Read-Only API Key", {
-    action: () => {
-      const key = generateApiKey("read-only", "readonly");
-      tray?.notify("API Key Created", `Read-only key copied to clipboard.\n\n${key}`);
-      const ps = spawn("powershell", ["-command", "Set-Clipboard -Value $input"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
-      ps.stdin.write(key);
-      ps.stdin.end();
-    },
+  // Magic link generation
+  const FRONTEND_URL = "https://cloghan-tm.vercel.app";
+
+  function copyMagicLink(permissions: "readonly" | "readwrite") {
+    if (!ngrokUrl) {
+      tray?.notify("No Tunnel", "Tunnel is not connected yet.");
+      return;
+    }
+    const key = generateApiKey(`magic-${permissions}`, permissions);
+    const token = Buffer.from(JSON.stringify({ s: ngrokUrl, k: key })).toString("base64url");
+    const magicLink = `${FRONTEND_URL}?token=${token}`;
+    const ps = spawn("powershell", ["-command", "Set-Clipboard -Value $input"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
+    ps.stdin.write(magicLink);
+    ps.stdin.end();
+    tray?.notify("Magic Link Copied", `Open this link in a browser to log in automatically.\n\n${magicLink}`);
+  }
+
+  const copyMagicReadOnly = tray.item("Copy Magic Link (Read-Only)", {
+    disabled: !ngrokUrl,
+    action: () => copyMagicLink("readonly"),
   });
 
-  const genReadWrite = tray.item("Generate Read/Write API Key", {
-    action: () => {
-      const key = generateApiKey("read-write", "readwrite");
-      tray?.notify("API Key Created", `Read/write key copied to clipboard.\n\n${key}`);
-      const ps = spawn("powershell", ["-command", "Set-Clipboard -Value $input"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
-      ps.stdin.write(key);
-      ps.stdin.end();
-    },
+  const copyMagicReadWrite = tray.item("Copy Magic Link (Read/Write)", {
+    disabled: !ngrokUrl,
+    action: () => copyMagicLink("readwrite"),
   });
 
   // View keys submenu
@@ -155,24 +161,6 @@ function updateTrayMenu(): void {
   const viewKeys = tray.item("View Active API Keys");
   viewKeys.add(...viewKeysItems);
 
-  // Separator
-  const sep1 = tray.separator();
-
-  // Copy tunnel URL
-  const copyUrl = tray.item("Copy Tunnel URL", {
-    disabled: !ngrokUrl,
-    action: () => {
-      if (ngrokUrl) {
-        const ps = spawn("powershell", ["-command", "Set-Clipboard -Value $input"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
-        ps.stdin.write(ngrokUrl);
-        ps.stdin.end();
-        tray?.notify("Copied", "Tunnel URL copied to clipboard.");
-      }
-    },
-  });
-
-  const sep2 = tray.separator();
-
   // Pause/resume
   const pauseItem = tray.item(capturePaused ? "Resume Capture" : "Pause Capture", {
     action: () => {
@@ -180,8 +168,6 @@ function updateTrayMenu(): void {
       updateTrayMenu();
     },
   });
-
-  const sep3 = tray.separator();
 
   // Quit
   const quit = tray.item("Quit", {
@@ -196,13 +182,11 @@ function updateTrayMenu(): void {
   tray.setMenu(
     tray.item(`Server: ${serverStatus}`, { disabled: true }),
     tray.item(`Tunnel: ${tunnelStatus}`, { disabled: true }),
-    sep1,
-    genReadOnly,
-    genReadWrite,
+    tray.separator(),
+    copyMagicReadWrite,
+    copyMagicReadOnly,
     viewKeys,
-    sep2,
-    copyUrl,
-    sep3,
+    tray.separator(),
     pauseItem,
     quit,
   );

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from "react";
-import { testConnection, checkSession, loginRequest, logoutRequest, apiGet, apiRequest } from "./api.js";
+import { testConnection, checkSession, loginRequest, logoutRequest, apiGet, apiRequest, parseMagicLink, setServerConfig } from "./api.js";
 import { defaultSettings } from "./types.js";
 import type { Page, RefreshStatus, ToastKind, Permissions, Reading, RefreshRun, Settings, RefreshResult, Toast } from "./types.js";
 import { asReadings, asRuns, asSettings, messageFromError, readingToPayload, settingsToPayload, normalizeReading, emptyReading, labelStatus } from "./helpers.js";
@@ -30,8 +30,22 @@ function App() {
 
   const isReadOnly = permissions === "readonly";
 
-  // Check session on mount
+  // Check session on mount (magic link takes priority)
   useEffect(() => {
+    const magic = parseMagicLink();
+    if (magic) {
+      let cancelled = false;
+      loginRequest(magic.serverUrl, magic.apiKey).then((r) => {
+        if (cancelled) return;
+        if (r.ok && r.permissions) {
+          setServerConfig(magic.serverUrl, magic.apiKey);
+          setServerUrl(magic.serverUrl);
+          setPermissions(r.permissions);
+        }
+      }).catch(() => {});
+      return () => { cancelled = true; };
+    }
+
     const url = localStorage.getItem("serverUrl");
     const key = localStorage.getItem("apiKey");
     if (url && key) {

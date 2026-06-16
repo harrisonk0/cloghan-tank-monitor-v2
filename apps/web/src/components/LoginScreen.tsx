@@ -92,8 +92,8 @@ export default function LoginScreen({ onLogin }: { onLogin: (url: string, permis
         )}
 
         <div className="login-help">
-          <p>Generate an API key from the server tray menu:</p>
-          <p className="login-help-cmd">Right-click tray icon &rarr; Generate Read/Write API Key</p>
+          <p>Or paste a magic link from the server tray:</p>
+          <p className="login-help-cmd">Right-click tray icon &rarr; Copy Magic Link</p>
         </div>
       </div>
     </div>
