@@ -9,6 +9,10 @@ param(
     [switch]$NonInteractive
 )
 
+# This placeholder is replaced by build-installer.ps1 with a base64-encoded .env
+# when creating a pre-packaged installer. Leave empty for the standard installer.
+$BakedConfig = ""
+
 $ErrorActionPreference = "Stop"
 $RepoUrl = "https://github.com/harrisonk0/cloghan-tank-monitor-v2.git"
 $InstallDir = Join-Path $env:USERPROFILE "CloghanTankMonitor"
@@ -192,7 +196,18 @@ try {
 Write-Host "[5/5] Setting up..." -ForegroundColor Yellow
 
 if (-not (Test-Path $EnvPath)) {
-    if ($NonInteractive) {
+    if ($BakedConfig) {
+        # Pre-packaged installer: decode embedded config
+        try {
+            $envContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($BakedConfig))
+            Set-Content -Path $EnvPath -Value $envContent -Encoding UTF8
+            Write-Host "  Pre-configured settings applied" -ForegroundColor Green
+        } catch {
+            Write-Host "  ERROR: Could not decode embedded configuration." -ForegroundColor Red
+            if (-not $NonInteractive) { Read-Host "Press Enter to exit" }
+            exit 1
+        }
+    } elseif ($NonInteractive) {
         Write-Host "  No .env found - using defaults (AI_API_KEY not set)" -ForegroundColor Yellow
         $lines = @(
             "PORT=3000",
@@ -218,11 +233,14 @@ if (-not (Test-Path $EnvPath)) {
         $baseUrl = Read-Host "  Enter AI base URL (press Enter for https://api.openai.com/v1)"
         if ([string]::IsNullOrWhiteSpace($baseUrl)) { $baseUrl = "https://api.openai.com/v1" }
 
+        $aiModel = Read-Host "  Enter AI model (press Enter for gpt-4o-mini)"
+        if ([string]::IsNullOrWhiteSpace($aiModel)) { $aiModel = "gpt-4o-mini" }
+
         $lines = @(
             "PORT=3000",
             "AI_BASE_URL=$baseUrl",
             "AI_API_KEY=$apiKey",
-            "AI_MODEL=gpt-4o-mini",
+            "AI_MODEL=$aiModel",
             "AI_CONFIDENCE_THRESHOLD=0.85",
             "SCREENSHOT_SUCCESS_RETENTION_HOURS=3"
         )
