@@ -1,4 +1,6 @@
 {
+  "outputDirectory": "apps/web/dist",
+  "buildCommand": "npm run build",
   "rewrites": [
     { "source": "/((?!assets/).*)", "destination": "/index.html" }
   ],
