@@ -1121,6 +1121,56 @@ legend {
 }
 
 /* ============================================================
+   Screenshot blocker overlay
+   ============================================================ */
+
+.screenshot-blocker {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: var(--bg-base);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: blocker-fade-in 0.15s ease-out;
+}
+
+.screenshot-blocker-content {
+  text-align: center;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.screenshot-blocker-content p {
+  margin: 0.75rem 0 0;
+  font-size: 0.875rem;
+}
+
+.screenshot-blocker-sub {
+  font-size: 0.75rem !important;
+  opacity: 0.6;
+}
+
+.screenshot-blocker-spinner {
+  width: 32px;
+  height: 32px;
+  margin: 0 auto;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent-cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes blocker-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ============================================================
    Responsive
    ============================================================ */
 

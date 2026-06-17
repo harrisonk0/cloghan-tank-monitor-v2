@@ -259,6 +259,15 @@ function App() {
         {!loading && page === "settings" && <SettingsPage settings={settings} isReadOnly={isReadOnly} onSave={saveSettings} />}
         {!loading && page === "history" && <HistoryPage runs={runs} />}
       </main>
+      {refreshStatus === "running" && (
+        <div className="screenshot-blocker" aria-hidden="true">
+          <div className="screenshot-blocker-content">
+            <div className="screenshot-blocker-spinner" />
+            <p>Capturing screenshot\u2026</p>
+            <p className="screenshot-blocker-sub">Screen obscured to prevent self-reading</p>
+          </div>
+        </div>
+      )}
       {editing && !isReadOnly && (
         <ReadingModal title={editing.id ? "Edit reading" : "Add reading"} initial={editing} onSave={saveReading} onClose={() => setEditing(null)} />
       )}

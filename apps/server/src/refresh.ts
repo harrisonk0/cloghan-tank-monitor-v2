@@ -42,12 +42,6 @@ export async function runRefresh(): Promise<unknown> {
 
   try {
     const extraction = await callVisionApiWithRetry(screenshotPaths);
-    const validationError = validateExtraction(extraction);
-    if (validationError) {
-      finishRefreshRun({ id: runId, startedAt, status: "failed", errorCode: validationError, message: extraction.message || "AI response failed validation.", confidence: extraction.confidence ?? null, readingId: null, screenshotPaths });
-      notify("failure", `Refresh failed - ${extraction.message || validationError}`);
-      return refreshResponse("failed", validationError, extraction.message || "AI response failed validation.", extraction.confidence ?? null, null);
-    }
 
     if (extraction.status !== "success" && extraction.status !== "ok") {
       const errorCode = extraction.errorCode ?? "ERR_AI_INVALID_RESPONSE";
@@ -137,13 +131,44 @@ async function callVisionApi(screenshotPaths: string[]): Promise<AiExtraction> {
     messages: [
       {
         role: "system",
-        content:
-          "Return JSON only. Extract the visible Cloghan tank monitoring table. Required tanks are C1, C2, C3, C4. Do not guess missing values. Use null only for truly blank numeric cells. Remove commas and trailing M suffixes from numbers.",
+        content: [
+          "You are a data extraction assistant. Return ONLY a single JSON object with no markdown, no commentary, no explanation.",
+          "Extract the Cloghan tank monitoring table visible in the screenshot(s).",
+          "Required tanks: C1, C2, C3, C4. Do not guess missing values — use null for truly blank cells.",
+          "Strip commas and trailing 'M' suffixes from numbers (e.g. '82,456M' → 82456).",
+          "",
+          "You MUST return this EXACT JSON structure:",
+          '{',
+          '  "status": "success",',
+          '  "errorCode": null,',
+          '  "message": "<short description of what you extracted>",',
+          '  "confidence": <number between 0.0 and 1.0>,',
+          '  "reading": {',
+          '    "tanks": [',
+          '      { "tank": "C1", "levelMm": <number|null>, "temperatureC": <number|null>, "tovM3": <number|null>, "gsvM3": <number|null> },',
+          '      { "tank": "C2", "levelMm": <number|null>, "temperatureC": <number|null>, "tovM3": <number|null>, "gsvM3": <number|null> },',
+          '      { "tank": "C3", "levelMm": <number|null>, "temperatureC": <number|null>, "tovM3": <number|null>, "gsvM3": <number|null> },',
+          '      { "tank": "C4", "levelMm": <number|null>, "temperatureC": <number|null>, "tovM3": <number|null>, "gsvM3": <number|null> }',
+          '    ]',
+          '  }',
+          '}',
+          "",
+          "RULES:",
+          '- "status" MUST be exactly the string "success" if you can read the table.',
+          '- "confidence" MUST be a decimal number between 0.0 and 1.0 (NOT a percentage, NOT a string).',
+          '- "message" MUST be a string.',
+          '- "errorCode" MUST be null on success.',
+          '- If the table is not visible, set status to "failed", errorCode to "ERR_TABLE_NOT_FOUND", and omit reading.',
+          '- If the table is partially unreadable, set status to "failed", errorCode to "ERR_INCOMPLETE_TABLE".',
+          "- Do NOT include capturedAt — the server sets it.",
+          "- Do NOT wrap your response in markdown code fences.",
+          "- IGNORE any dashboard/web UI overlays — only read the underlying tank monitoring application data.",
+        ].join("\n"),
       },
       {
         role: "user",
         content: [
-          { type: "text", text: "Extract tank readings using the exact contract: {status,errorCode,message,confidence,reading:{tanks:[{tank,levelMm,temperatureC,tovM3,gsvM3}]},details}. Do NOT include capturedAt — the server sets it automatically. If table missing use ERR_TABLE_NOT_FOUND; if incomplete use ERR_INCOMPLETE_TABLE." },
+          { type: "text", text: "Extract the tank readings from this screenshot. Return ONLY the JSON object described in your instructions. No markdown, no extra text." },
           ...images.map((url) => ({ type: "image_url", image_url: { url } })),
         ],
       },
@@ -177,13 +202,26 @@ async function callVisionApiWithRetry(screenshotPaths: string[]): Promise<AiExtr
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await callVisionApi(screenshotPaths);
+      const raw = await callVisionApi(screenshotPaths);
+      const normalized = normalizeExtraction(raw);
+      const validationError = validateExtraction(normalized);
+      if (validationError) {
+        const msg = `Validation failed: ${validationError} (${normalized.message || "no message"})`;
+        if (attempt >= MAX_RETRIES) throw new Error(msg);
+        console.log(`[refresh] Retry ${attempt + 1}/${MAX_RETRIES} - ${msg}`);
+        const jitter = BASE_BACKOFF_MS * (0.75 + Math.random() * 0.5);
+        const delay = BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter;
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      return normalized;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       const msg = lastError.message;
-      const isRetryable = msg.includes("HTTP 5") || msg.includes("fetch") || msg.includes("JSON") || msg.includes("strict JSON") || msg.includes("not include message content");
       const isPermanent = msg.includes("permanent error");
-      if (!isRetryable || isPermanent || attempt >= MAX_RETRIES) throw lastError;
+      if (isPermanent || attempt >= MAX_RETRIES) throw lastError;
+      const isRetryable = msg.includes("HTTP 5") || msg.includes("fetch") || msg.includes("JSON") || msg.includes("strict JSON") || msg.includes("not include message content") || msg.includes("Validation failed");
+      if (!isRetryable) throw lastError;
       const jitter = BASE_BACKOFF_MS * (0.75 + Math.random() * 0.5);
       const delay = BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter;
       console.log(`[refresh] Retry ${attempt + 1}/${MAX_RETRIES} after ${Math.round(delay)}ms: ${msg}`);
@@ -191,6 +229,53 @@ async function callVisionApiWithRetry(screenshotPaths: string[]): Promise<AiExtr
     }
   }
   throw lastError ?? new Error("AI API failed after retries.");
+}
+
+function normalizeExtraction(raw: AiExtraction): AiExtraction {
+  const result = { ...raw };
+
+  // Normalize status variants
+  const statusStr = String(result.status ?? "").toLowerCase().trim();
+  if (["success", "ok", "complete", "completed", "done", "extracted"].includes(statusStr)) {
+    result.status = "success";
+  } else if (["failed", "error", "failure"].includes(statusStr)) {
+    result.status = "failed";
+  }
+
+  // Normalize confidence: string → number, percentage → decimal
+  if (result.confidence !== undefined && result.confidence !== null) {
+    let conf = result.confidence as unknown;
+    if (typeof conf === "string") conf = Number(conf);
+    if (typeof conf === "number" && Number.isFinite(conf)) {
+      if (conf > 1 && conf <= 100) conf = conf / 100;
+      result.confidence = conf as number;
+    }
+  }
+
+  // Normalize message: null/undefined/number → string
+  if (result.message === undefined || result.message === null) {
+    result.message = "";
+  } else if (typeof result.message !== "string") {
+    result.message = String(result.message);
+  }
+
+  // Normalize errorCode: empty string/undefined → null (AI may return arbitrary strings)
+  if (!result.errorCode || typeof result.errorCode !== "string") {
+    result.errorCode = null;
+  }
+
+  // Unwrap nested response (some models wrap in { result: ... } or { data: ... })
+  if (!result.reading && (result as Record<string, unknown>).result && typeof (result as Record<string, unknown>).result === "object") {
+    const nested = (result as Record<string, unknown>).result as Partial<AiExtraction>;
+    if (nested.reading) {
+      result.reading = nested.reading;
+      if (nested.status) result.status = nested.status;
+      if (nested.confidence !== undefined) result.confidence = nested.confidence as number;
+      if (nested.message) result.message = nested.message;
+    }
+  }
+
+  return result;
 }
 
 function parseStrictJson(content: string): AiExtraction {
