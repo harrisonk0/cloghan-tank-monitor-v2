@@ -1121,37 +1121,44 @@ legend {
 }
 
 /* ============================================================
-   Screenshot blocker overlay
+   Refresh overlay
    ============================================================ */
 
-.screenshot-blocker {
+.refresh-overlay {
   position: fixed;
   inset: 0;
   z-index: 99999;
-  background: var(--bg-base);
+  background: rgba(10, 12, 16, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: blocker-fade-in 0.15s ease-out;
+  animation: overlay-fade-in 0.2s ease-out;
 }
 
-.screenshot-blocker-content {
+.refresh-overlay-modal {
   text-align: center;
-  color: var(--text-dim);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2.5rem 3rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.refresh-overlay-modal p {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  color: var(--text-primary);
   font-family: var(--font-mono);
 }
 
-.screenshot-blocker-content p {
-  margin: 0.75rem 0 0;
-  font-size: 0.875rem;
-}
-
-.screenshot-blocker-sub {
+.refresh-overlay-sub {
   font-size: 0.75rem !important;
-  opacity: 0.6;
+  color: var(--text-dim) !important;
 }
 
-.screenshot-blocker-spinner {
+.refresh-overlay-spinner {
   width: 32px;
   height: 32px;
   margin: 0 auto;
@@ -1161,7 +1168,7 @@ legend {
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes blocker-fade-in {
+@keyframes overlay-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }

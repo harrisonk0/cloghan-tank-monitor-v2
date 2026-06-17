@@ -260,11 +260,11 @@ function App() {
         {!loading && page === "history" && <HistoryPage runs={runs} />}
       </main>
       {refreshStatus === "running" && (
-        <div className="screenshot-blocker" aria-hidden="true">
-          <div className="screenshot-blocker-content">
-            <div className="screenshot-blocker-spinner" />
-            <p>Capturing screenshot\u2026</p>
-            <p className="screenshot-blocker-sub">Screen obscured to prevent self-reading</p>
+        <div className="refresh-overlay" aria-hidden="true">
+          <div className="refresh-overlay-modal">
+            <div className="refresh-overlay-spinner" />
+            <p>Refreshing\u2026</p>
+            <p className="refresh-overlay-sub">Capturing and extracting tank data</p>
           </div>
         </div>
       )}
