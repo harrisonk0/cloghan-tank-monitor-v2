@@ -51,7 +51,7 @@ export type RefreshRun = {
 };
 
 export type Settings = {
-  scheduleMode: "manual" | "10m" | "30m" | "1h" | "custom";
+  scheduleMode: "manual" | "10m" | "30m" | "1h" | "onTheHour" | "custom";
   customIntervalMinutes: number;
   notifySuccess: boolean;
   notifyWarning: boolean;

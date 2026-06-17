@@ -29,6 +29,7 @@ export default function SettingsPage({ settings, isReadOnly, onSave }: { setting
           <option value="10m">Every 10 minutes</option>
           <option value="30m">Every 30 minutes</option>
           <option value="1h">Every hour</option>
+          <option value="onTheHour">Every hour on the hour</option>
           <option value="custom">Custom interval</option>
         </select>
       </label>
