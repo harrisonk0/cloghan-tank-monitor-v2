@@ -222,6 +222,17 @@ export function getServerStatus(): { running: boolean; port: number } {
   return { running: serverRunning, port: config.port };
 }
 
+export async function stopServer(): Promise<void> {
+  if (!serverRunning) return;
+  try {
+    await app.close();
+    serverRunning = false;
+    console.log("[server] Stopped.");
+  } catch (error) {
+    console.error("[server] Error stopping:", error);
+  }
+}
+
 // Auto-start only when run directly (not imported by tray)
 const isMainModule = process.argv[1]?.endsWith("index.ts") || process.argv[1]?.endsWith("index.js");
 if (isMainModule) {

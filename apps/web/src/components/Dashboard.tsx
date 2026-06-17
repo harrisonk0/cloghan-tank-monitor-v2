@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { Reading, RefreshRun, TankName, TankReading } from "../types.js";
 import { TANKS, MAX_LEVEL } from "../types.js";
 import { formatNumber, formatDate, formatShortDate, formatConfidence, formatDuration } from "../helpers.js";
@@ -13,6 +14,9 @@ export default function Dashboard({ readings, latest, previous, runs }: { readin
     level: r.totalLevelMm ?? 0,
     gsv: r.totalGsvM3 ?? 0,
   }));
+
+  const levelDomain = useMemo(() => computeDomain(chartData, "level"), [chartData]);
+  const gsvDomain = useMemo(() => computeDomain(chartData, "gsv"), [chartData]);
 
   const latestRun = runs[0];
 
@@ -54,8 +58,8 @@ export default function Dashboard({ readings, latest, previous, runs }: { readin
         </div>
       </section>
 
-      <ChartPanel title="Level trend" data={chartData} dataKey="level" stroke="var(--accent-cyan)" suffix=" mm" />
-      <ChartPanel title="GSV trend" data={chartData} dataKey="gsv" stroke="var(--accent-green)" suffix=" m\u00B3" />
+      <ChartPanel title="Level trend" data={chartData} dataKey="level" stroke="var(--accent-cyan)" suffix=" mm" domain={levelDomain} />
+      <ChartPanel title="GSV trend" data={chartData} dataKey="gsv" stroke="var(--accent-green)" suffix=" m\u00B3" domain={gsvDomain} />
     </div>
   );
 }
@@ -117,4 +121,13 @@ function TankViz({ tank, reading, previous }: { tank: TankName; reading?: TankRe
       </div>
     </div>
   );
+}
+
+function computeDomain(data: Array<Record<string, string | number>>, key: string): [number, number] {
+  const values = data.map((d) => Number(d[key])).filter((v) => Number.isFinite(v) && v !== 0);
+  if (values.length === 0) return [0, 100];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const pad = (max - min) * 0.15 || Math.abs(max) * 0.15 || 10;
+  return [Math.max(0, Math.floor(min - pad)), Math.ceil(max + pad)];
 }

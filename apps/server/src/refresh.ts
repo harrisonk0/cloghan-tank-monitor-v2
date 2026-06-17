@@ -41,7 +41,7 @@ export async function runRefresh(): Promise<unknown> {
   if (runId == null) throw new Error("Refresh run could not be started.");
 
   try {
-    const extraction = await callVisionApi(screenshotPaths);
+    const extraction = await callVisionApiWithRetry(screenshotPaths);
     const validationError = validateExtraction(extraction);
     if (validationError) {
       finishRefreshRun({ id: runId, startedAt, status: "failed", errorCode: validationError, message: extraction.message || "AI response failed validation.", confidence: extraction.confidence ?? null, readingId: null, screenshotPaths });
@@ -130,42 +130,74 @@ async function captureScreenshots(): Promise<string[]> {
 async function callVisionApi(screenshotPaths: string[]): Promise<AiExtraction> {
   if (!config.aiApiKey) throw new Error("AI_API_KEY is not configured.");
   const images = await Promise.all(screenshotPaths.map(async (file) => `data:image/png;base64,${(await fs.readFile(file)).toString("base64")}`));
+  const isOpenAICompatible = /openai\.com|azure/i.test(config.aiBaseUrl);
+  const body: Record<string, unknown> = {
+    model: config.aiModel,
+    temperature: 0,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Return JSON only. Extract the visible Cloghan tank monitoring table. Required tanks are C1, C2, C3, C4. Do not guess missing values. Use null only for truly blank numeric cells. Remove commas and trailing M suffixes from numbers.",
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Extract tank readings using the exact contract: {status,errorCode,message,confidence,reading:{tanks:[{tank,levelMm,temperatureC,tovM3,gsvM3}]},details}. Do NOT include capturedAt — the server sets it automatically. If table missing use ERR_TABLE_NOT_FOUND; if incomplete use ERR_INCOMPLETE_TABLE." },
+          ...images.map((url) => ({ type: "image_url", image_url: { url } })),
+        ],
+      },
+    ],
+  };
+  if (isOpenAICompatible) body.response_format = { type: "json_object" };
+
   const response = await fetch(`${config.aiBaseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${config.aiApiKey}`,
     },
-    body: JSON.stringify({
-      model: config.aiModel,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "Return JSON only. Extract the visible Cloghan tank monitoring table. Required tanks are C1, C2, C3, C4. Do not guess missing values. Use null only for truly blank numeric cells. Remove commas and trailing M suffixes from numbers.",
-        },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Extract tank readings using the exact contract: {status,errorCode,message,confidence,reading:{tanks:[{tank,levelMm,temperatureC,tovM3,gsvM3}]},details}. Do NOT include capturedAt — the server sets it automatically. If table missing use ERR_TABLE_NOT_FOUND; if incomplete use ERR_INCOMPLETE_TABLE." },
-            ...images.map((url) => ({ type: "image_url", image_url: { url } })),
-          ],
-        },
-      ],
-    }),
+    body: JSON.stringify(body),
   });
 
-  if (!response.ok) throw new Error(`AI API request failed with HTTP ${response.status}.`);
+  if (!response.ok) {
+    if (response.status >= 500) throw new Error(`AI API request failed with HTTP ${response.status}.`);
+    throw new Error(`AI API permanent error HTTP ${response.status}.`);
+  }
   const payload = (await response.json()) as { choices?: { message?: { content?: string } }[] };
   const content = payload.choices?.[0]?.message?.content;
   if (!content) throw new Error("AI response did not include message content.");
   return parseStrictJson(content);
 }
 
+const MAX_RETRIES = 2;
+const BASE_BACKOFF_MS = 2000;
+
+async function callVisionApiWithRetry(screenshotPaths: string[]): Promise<AiExtraction> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await callVisionApi(screenshotPaths);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const msg = lastError.message;
+      const isRetryable = msg.includes("HTTP 5") || msg.includes("fetch") || msg.includes("JSON") || msg.includes("strict JSON") || msg.includes("not include message content");
+      const isPermanent = msg.includes("permanent error");
+      if (!isRetryable || isPermanent || attempt >= MAX_RETRIES) throw lastError;
+      const jitter = BASE_BACKOFF_MS * (0.75 + Math.random() * 0.5);
+      const delay = BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter;
+      console.log(`[refresh] Retry ${attempt + 1}/${MAX_RETRIES} after ${Math.round(delay)}ms: ${msg}`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError ?? new Error("AI API failed after retries.");
+}
+
 function parseStrictJson(content: string): AiExtraction {
-  const trimmed = content.trim();
+  let trimmed = content.trim();
+  // Strip markdown code fences (```json ... ``` or ``` ... ```)
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
+  if (fenceMatch) trimmed = fenceMatch[1].trim();
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) throw new Error("AI response was not strict JSON.");
   try {
     return JSON.parse(trimmed) as AiExtraction;

@@ -72,6 +72,7 @@ function App() {
   // Load data when authenticated
   useEffect(() => {
     if (serverUrl && permissions) {
+      initialLoadDone.current = false;
       void loadAll();
     }
   }, [serverUrl, permissions]);
@@ -88,13 +89,14 @@ function App() {
   }, [serverUrl]);
 
   const loadAllController = useRef<AbortController | null>(null);
+  const initialLoadDone = useRef(false);
 
   const loadAll = useCallback(async () => {
     loadAllController.current?.abort();
     const controller = new AbortController();
     loadAllController.current = controller;
 
-    setLoading(true);
+    if (!initialLoadDone.current) setLoading(true);
     try {
       const [readingsData, runsData, settingsData] = await Promise.all([
         apiGet("/readings"),
@@ -109,6 +111,7 @@ function App() {
       if (controller.signal.aborted) return;
       pushToast("error", messageFromError(error));
     } finally {
+      initialLoadDone.current = true;
       if (!controller.signal.aborted) setLoading(false);
     }
   }, []);

@@ -4,7 +4,9 @@ import net from "node:net";
 import path from "node:path";
 import Tray from "trayicon";
 import { generateApiKey, listApiKeys, revokeApiKey } from "./db.js";
-import { startServer, getServerStatus } from "./index.js";
+import { startServer, getServerStatus, stopServer } from "./index.js";
+import { paths } from "./config.js";
+import { checkForUpdates, pullUpdates, applyUpdateAndRestart } from "./updater.js";
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -105,7 +107,7 @@ function startNgrok(): void {
   }, 2000);
 }
 
-function stopNgrok(): void {
+export function stopNgrok(): void {
   if (ngrokProcess) {
     ngrokProcess.kill();
     ngrokProcess = null;
@@ -178,19 +180,49 @@ function updateTrayMenu(): void {
   });
 
   // View logs
-  const logFile = path.resolve(import.meta.dirname ?? ".", "..", "..", "..", "runtime", "logs", "server.log");
   const viewLogs = tray.item("View Logs", {
     action: () => {
-      if (!fs.existsSync(logFile)) {
-        tray?.notify("No Logs", "No log file found yet.");
+      if (!fs.existsSync(paths.logFile)) {
+        try {
+          fs.mkdirSync(paths.logsDir, { recursive: true });
+          fs.writeFileSync(paths.logFile, "", { flag: "a" });
+        } catch {
+          tray?.notify("No Logs", "Could not create log file.");
+          return;
+        }
+      }
+      try {
+        const ps = spawn("powershell.exe", ["-NoExit", "-Command", `Get-Content (Get-Item -LiteralPath '${paths.logFile.replace(/'/g, "''")}') -Wait -Tail 50`], {
+          windowsHide: false,
+          stdio: "ignore",
+        });
+        ps.unref();
+      } catch (error) {
+        tray?.notify("Error", `Failed to open logs: ${error instanceof Error ? error.message : error}`);
+      }
+    },
+  });
+
+  // Check for updates
+  const checkUpdates = tray.item("Check for Updates", {
+    action: async () => {
+      tray?.notify("Checking for updates...", "Fetching from remote...");
+      const result = await checkForUpdates();
+      if (!result.available) {
+        tray?.notify("No Updates", result.message);
         return;
       }
-      const ps = spawn("powershell.exe", ["-NoExit", "-Command", `Get-Content '${logFile}' -Wait -Tail 50`], {
-        windowsHide: false,
-        detached: true,
-        stdio: "ignore",
+      tray?.notify("Update Available", result.message + "\n\nPulling updates...");
+      const pull = await pullUpdates();
+      if (!pull.success) {
+        tray?.notify("Update Failed", pull.message);
+        return;
+      }
+      tray?.notify("Restarting", "Updates applied. Restarting...");
+      applyUpdateAndRestart(async () => {
+        stopNgrok();
+        await stopServer();
       });
-      ps.unref();
     },
   });
 
@@ -198,6 +230,7 @@ function updateTrayMenu(): void {
   const quit = tray.item("Quit", {
     action: () => {
       stopNgrok();
+      stopServer();
       tray?.kill();
       process.exit(0);
     },
@@ -214,6 +247,7 @@ function updateTrayMenu(): void {
     tray.separator(),
     pauseItem,
     viewLogs,
+    checkUpdates,
     quit,
   );
 }

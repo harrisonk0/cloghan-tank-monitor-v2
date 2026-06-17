@@ -22,4 +22,6 @@ export const paths = {
   dataDir: path.join(config.runtimeDir, "data"),
   screenshotDir: path.join(config.runtimeDir, "screenshots"),
   database: path.join(config.runtimeDir, "data", "cloghan_tanks.sqlite"),
+  logsDir: path.join(config.runtimeDir, "logs"),
+  logFile: path.join(config.runtimeDir, "logs", "server.log"),
 };
