@@ -1,9 +1,6 @@
 export const TANKS = ["C1", "C2", "C3", "C4"] as const;
 export const MAX_LEVEL = 22000;
 
-export let nextToastId = 0;
-export function incrementToastId() { return ++nextToastId; }
-
 export const cachedNumberFmt = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 3 });
 export const cachedDateFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
 export const cachedShortDateFmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" });

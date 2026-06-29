@@ -49,13 +49,11 @@ export type PendingReview = {
   createdAt: string;
 };
 
-export type ApiKeyPermissions = "readonly" | "readwrite";
+export type Permissions = "readonly" | "readwrite";
 
-export type ApiKey = {
-  id: number;
-  key: string;
-  label: string | null;
-  permissions: ApiKeyPermissions;
-  created_at: string;
-  revoked_at: string | null;
+export type Session = {
+  token: string;
+  permissions: Permissions;
+  createdAt: string;
+  expiresAt: string;
 };

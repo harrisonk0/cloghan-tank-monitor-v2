@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from "react";
-import { testConnection, checkSession, loginRequest, logoutRequest, apiGet, apiRequest, parseMagicLink, setServerConfig } from "./api.js";
+import { testConnection, checkSession, loginRequest, logoutRequest, apiGet, apiRequest, setServerConfig } from "./api.js";
 import { defaultSettings } from "./types.js";
 import type { Page, RefreshStatus, ToastKind, Permissions, Reading, RefreshRun, Settings, RefreshResult, Toast } from "./types.js";
 import { asReadings, asRuns, asSettings, messageFromError, readingToPayload, settingsToPayload, normalizeReading, emptyReading, labelStatus } from "./helpers.js";
@@ -30,39 +30,17 @@ function App() {
 
   const isReadOnly = permissions === "readonly";
 
-  // Check session on mount (magic link takes priority)
+  // Check session on mount
   useEffect(() => {
-    const magic = parseMagicLink();
-    if (magic) {
-      let cancelled = false;
-      loginRequest(magic.serverUrl, magic.apiKey).then((r) => {
-        if (cancelled) return;
-        if (r.ok && r.permissions) {
-          setServerConfig(magic.serverUrl, magic.apiKey);
-          setServerUrl(magic.serverUrl);
-          setPermissions(r.permissions);
-        }
-      }).catch(() => {});
-      return () => { cancelled = true; };
-    }
-
     const url = localStorage.getItem("serverUrl");
-    const key = localStorage.getItem("apiKey");
-    if (url && key) {
+    const token = localStorage.getItem("sessionToken");
+    if (url && token) {
       let cancelled = false;
-      checkSession(url).then((s) => {
+      checkSession(url, token).then((s) => {
         if (cancelled) return;
         if (s.authenticated) {
           setServerUrl(url);
           setPermissions(s.permissions ?? "readonly");
-        } else {
-          loginRequest(url, key).then((r) => {
-            if (cancelled) return;
-            if (r.ok && r.permissions) {
-              setServerUrl(url);
-              setPermissions(r.permissions);
-            }
-          }).catch(() => {});
         }
       }).catch(() => {});
       return () => { cancelled = true; };
@@ -153,7 +131,6 @@ function App() {
         method: "POST",
         body: JSON.stringify({
           reading: readingToPayload(reading),
-          refreshRunId: review.refreshRunId,
           reviewId: review.reviewId,
         }),
       })) as RefreshResult;
@@ -208,7 +185,9 @@ function App() {
 
   function handleLogout() {
     if (!window.confirm("Are you sure you want to logout?")) return;
-    if (serverUrl) void logoutRequest(serverUrl);
+    const url = localStorage.getItem("serverUrl") ?? "";
+    const token = localStorage.getItem("sessionToken") ?? "";
+    if (url && token) void logoutRequest(url, token);
     setServerUrl(null);
     setPermissions(null);
   }

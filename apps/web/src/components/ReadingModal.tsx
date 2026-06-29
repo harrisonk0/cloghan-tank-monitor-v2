@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import type { Reading, TankReading } from "../types.js";
 import { nullableNumber, toDateTimeLocal, normalizeReading } from "../helpers.js";
 
-function Panel({ children }: { children: React.ReactNode }) {
+function Panel({ children }: { children: ReactNode }) {
   return <div className="panel full-width">{children}</div>;
 }
 

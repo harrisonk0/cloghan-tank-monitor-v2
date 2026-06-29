@@ -5,18 +5,18 @@ import { formatNumber, formatDate, formatShortDate, formatConfidence, formatDura
 import ChartPanel from "./ChartPanel.js";
 
 export default function Dashboard({ readings, latest, previous, runs }: { readings: Reading[]; latest?: Reading; previous?: Reading; runs: RefreshRun[] }) {
-  if (!latest) {
-    return <div className="page-grid"><div className="empty-state">No readings yet. Click Refresh to capture tank data.</div></div>;
-  }
-
-  const chartData = readings.slice(0, 30).reverse().map((r) => ({
+  const chartData = useMemo(() => readings.slice(0, 30).reverse().map((r) => ({
     time: formatShortDate(r.capturedAt),
     level: r.totalLevelMm ?? 0,
     gsv: r.totalGsvM3 ?? 0,
-  }));
+  })), [readings]);
 
   const levelDomain = useMemo(() => computeDomain(chartData, "level"), [chartData]);
   const gsvDomain = useMemo(() => computeDomain(chartData, "gsv"), [chartData]);
+
+  if (!latest) {
+    return <div className="page-grid"><div className="empty-state">No readings yet. Click Refresh to capture tank data.</div></div>;
+  }
 
   const latestRun = runs[0];
 

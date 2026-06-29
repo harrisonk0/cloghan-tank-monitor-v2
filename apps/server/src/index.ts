@@ -1,9 +1,10 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
-import cookie from "cookie";
-import { authenticate, clearSessionCookie, requireReadWrite, setSessionCookie } from "./auth.js";
+import { authenticate, checkPassword, requireReadWrite } from "./auth.js";
 import { config, paths } from "./config.js";
 import {
+  createSession,
+  deleteSession,
   deleteReading,
   getReading,
   getSettings,
@@ -12,7 +13,7 @@ import {
   listRefreshRuns,
   updateReading,
   updateSettings,
-  validateApiKey,
+  validateSession,
 } from "./db.js";
 import { confirmRefresh, runRefresh } from "./refresh.js";
 import { ReadingInput } from "./types.js";
@@ -33,7 +34,6 @@ await app.register(cors, {
     }
     cb(null, false);
   },
-  credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"],
 });
@@ -55,31 +55,34 @@ app.get("/api/health", async () => ({
 // ─── Auth routes ─────────────────────────────────────────────────────────────
 
 app.post("/api/auth", async (request, reply) => {
-  const { key } = (request.body ?? {}) as { key?: string };
-  if (!key || typeof key !== "string") {
-    return reply.code(400).send({ error: "API key is required." });
+  const { password } = (request.body ?? {}) as { password?: string };
+  if (!password || typeof password !== "string") {
+    return reply.code(400).send({ error: "Password is required." });
   }
-  const keyData = validateApiKey(key);
-  if (!keyData) {
-    return reply.code(401).send({ error: "Invalid API key." });
+  const permissions = checkPassword(password);
+  if (!permissions) {
+    return reply.code(401).send({ error: "Invalid password." });
   }
-  setSessionCookie(reply, key);
-  return { ok: true, permissions: keyData.permissions };
+  const session = createSession(permissions);
+  return { token: session.token, permissions: session.permissions, expiresAt: session.expiresAt };
 });
 
-app.delete("/api/auth", async (_request, reply) => {
-  clearSessionCookie(reply);
+app.delete("/api/auth", async (request, reply) => {
+  const authHeader = request.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    deleteSession(token);
+  }
   return { ok: true };
 });
 
 app.get("/api/auth", async (request, reply) => {
-  // Check if current session is valid
-  const cookies = cookie.parse(request.headers.cookie ?? "");
-  const sessionKey = cookies.ctm_session;
-  if (sessionKey) {
-    const keyData = validateApiKey(sessionKey);
-    if (keyData) {
-      return { authenticated: true, permissions: keyData.permissions };
+  const authHeader = request.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    const session = validateSession(token);
+    if (session) {
+      return { authenticated: true, permissions: session.permissions };
     }
   }
   return { authenticated: false };
@@ -206,16 +209,16 @@ let serverRunning = false;
 
 export function startServer(): void {
   if (serverRunning) return;
-  try {
-    configureScheduler();
-    app.listen({ port: config.port, host: "127.0.0.1" }).then(() => {
+  app
+    .listen({ port: config.port, host: "127.0.0.1" })
+    .then(() => {
       serverRunning = true;
       console.log(`[server] Listening on http://127.0.0.1:${config.port}`);
+    })
+    .catch((err) => {
+      app.log.error(err);
+      process.exit(1);
     });
-  } catch (error) {
-    app.log.error(error);
-    process.exit(1);
-  }
 }
 
 export function getServerStatus(): { running: boolean; port: number } {

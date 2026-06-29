@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { paths } from "./config.js";
-import type { ApiKey, ApiKeyPermissions, ReadingInput, TankName, TankReadingInput } from "./types.js";
+import type { ReadingInput, TankName, TankReadingInput, Session, Permissions } from "./types.js";
 import { localIsoNow } from "./util.js";
 
 export type DbReadingRow = {
@@ -93,15 +93,22 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_tank_readings_reading_id ON tank_readings(reading_id);
     CREATE INDEX IF NOT EXISTS idx_refresh_runs_started_at ON refresh_runs(started_at);
 
-    CREATE TABLE IF NOT EXISTS api_keys (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      key TEXT NOT NULL UNIQUE,
-      label TEXT,
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
       permissions TEXT NOT NULL CHECK(permissions IN ('readonly', 'readwrite')),
       created_at TEXT NOT NULL,
-      revoked_at TEXT
+      expires_at TEXT NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
   `);
+
+  // Drop legacy api_keys table if it exists
+  try {
+    database.exec("DROP TABLE IF EXISTS api_keys");
+  } catch {
+    // ignore — old table may not exist
+  }
 }
 
 function seedSettings(database: Database.Database): void {
@@ -112,6 +119,58 @@ function seedSettings(database: Database.Database): void {
   insert.run("notifyOnWarning", "true");
   insert.run("notifyOnFailure", "true");
 }
+
+// ─── Sessions ────────────────────────────────────────────────────────────────
+
+const SESSION_TTL_DAYS = 30;
+
+export function createSession(permissions: Permissions): Session {
+  pruneExpiredSessions();
+  const token = crypto.randomBytes(32).toString("hex");
+  const now = new Date();
+  const expires = new Date(now.getTime() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
+  const createdAt = localIsoNow();
+  const expiresAt = expires.toISOString();
+
+  db.prepare("INSERT INTO sessions (token, permissions, created_at, expires_at) VALUES (?, ?, ?, ?)").run(
+    token, permissions, createdAt, expiresAt,
+  );
+
+  return { token, permissions, createdAt, expiresAt };
+}
+
+export function validateSession(token: string): Session | null {
+  if (!token) return null;
+  const row = db.prepare("SELECT * FROM sessions WHERE token = ?").get(token) as
+    | { token: string; permissions: string; created_at: string; expires_at: string }
+    | undefined;
+
+  if (!row) return null;
+
+  // Check expiry
+  if (Date.parse(row.expires_at) < Date.now()) {
+    db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+    return null;
+  }
+
+  return {
+    token: row.token,
+    permissions: row.permissions as Permissions,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+  };
+}
+
+export function deleteSession(token: string): boolean {
+  const result = db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+  return result.changes > 0;
+}
+
+function pruneExpiredSessions(): void {
+  db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(new Date().toISOString());
+}
+
+// ─── Readings ────────────────────────────────────────────────────────────────
 
 export function listReadings(limit = 200): unknown[] {
   const rows = db
@@ -284,6 +343,8 @@ function recomputeReadingDiffs(aroundId?: number): void {
   }
 }
 
+// ─── Settings ────────────────────────────────────────────────────────────────
+
 export function getSettings(): Record<string, string> {
   const rows = db.prepare("SELECT key, value FROM settings ORDER BY key").all() as { key: string; value: string }[];
   return Object.fromEntries(rows.map((row) => [row.key, row.value]));
@@ -300,6 +361,8 @@ export function updateSettings(settings: Record<string, unknown>): Record<string
   transaction();
   return getSettings();
 }
+
+// ─── Refresh Runs ────────────────────────────────────────────────────────────
 
 export function startRefreshRun(startedAt: string, screenshotPaths: string[]): number {
   const result = db
@@ -329,7 +392,11 @@ export function finishRefreshRun(args: {
 
 export function listRefreshRuns(limit = 100): unknown[] {
   const rows = db.prepare("SELECT * FROM refresh_runs ORDER BY started_at DESC, id DESC LIMIT ?").all(Math.min(Math.max(limit, 1), 1000)) as Record<string, unknown>[];
-  return rows.map((row) => ({ ...row, screenshot_paths: JSON.parse(String(row.screenshot_paths ?? "[]")) }));
+  return rows.map((row) => {
+    let paths: unknown[] = [];
+    try { paths = JSON.parse(String(row.screenshot_paths ?? "[]")); } catch { /* leave empty */ }
+    return { ...row, screenshot_paths: Array.isArray(paths) ? paths : [] };
+  });
 }
 
 export function listExpiredSuccessfulScreenshotPaths(cutoffIso: string): string[] {
@@ -344,25 +411,4 @@ export function listExpiredSuccessfulScreenshotPaths(cutoffIso: string): string[
       return [];
     }
   });
-}
-
-// ─── API Keys ────────────────────────────────────────────────────────────────
-
-export function generateApiKey(label: string, permissions: ApiKeyPermissions): string {
-  const key = `ctm_live_${crypto.randomBytes(16).toString("hex")}`;
-  db.prepare("INSERT INTO api_keys (key, label, permissions, created_at) VALUES (?, ?, ?, ?)").run(key, label, permissions, localIsoNow());
-  return key;
-}
-
-export function validateApiKey(key: string): ApiKey | null {
-  return (db.prepare("SELECT * FROM api_keys WHERE key = ? AND revoked_at IS NULL").get(key) as ApiKey | null) ?? null;
-}
-
-export function listApiKeys(): Omit<ApiKey, "key">[] {
-  return db.prepare("SELECT id, label, permissions, created_at, revoked_at FROM api_keys WHERE revoked_at IS NULL ORDER BY created_at DESC").all() as Omit<ApiKey, "key">[];
-}
-
-export function revokeApiKey(id: number): boolean {
-  const result = db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(localIsoNow(), id);
-  return result.changes > 0;
 }

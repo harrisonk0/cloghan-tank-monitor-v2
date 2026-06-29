@@ -1,4 +1,6 @@
 import "dotenv/config";
+import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 
 function numberEnv(name: string, fallback: number): number {
@@ -6,6 +8,38 @@ function numberEnv(name: string, fallback: number): number {
   if (!raw) return fallback;
   const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
+}
+
+const PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generatePassword(length = 6): string {
+  const bytes = crypto.randomBytes(length);
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += PASSWORD_CHARS[bytes[i] % PASSWORD_CHARS.length];
+  }
+  return result;
+}
+
+function ensurePassword(envVar: string): string {
+  const existing = process.env[envVar];
+  if (existing) return existing;
+
+  const generated = generatePassword();
+  try {
+    const envPath = path.resolve(process.cwd(), ".env");
+    const line = `\n${envVar}=${generated}\n`;
+    if (fs.existsSync(envPath)) {
+      fs.appendFileSync(envPath, line);
+    } else {
+      fs.writeFileSync(envPath, line.trimStart());
+    }
+    console.log(`[config] Generated ${envVar} and wrote to .env`);
+  } catch {
+    console.warn(`[config] Could not write ${envVar} to .env — using in-memory value`);
+  }
+  process.env[envVar] = generated;
+  return generated;
 }
 
 export const config = {
@@ -16,6 +50,8 @@ export const config = {
   aiConfidenceThreshold: numberEnv("AI_CONFIDENCE_THRESHOLD", 0.85),
   screenshotSuccessRetentionHours: numberEnv("SCREENSHOT_SUCCESS_RETENTION_HOURS", 3),
   runtimeDir: path.resolve(process.cwd(), "runtime"),
+  authReadonlyPassword: ensurePassword("AUTH_READONLY_PASSWORD"),
+  authReadwritePassword: ensurePassword("AUTH_READWRITE_PASSWORD"),
 };
 
 export const paths = {

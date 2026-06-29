@@ -69,7 +69,9 @@ export function formatDuration(value: number | null | undefined) {
 
 export function toDateTimeLocal(value: string) {
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 16);
+  if (Number.isNaN(d.getTime())) return "";
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
 }
 
 export function labelStatus(status: string) {

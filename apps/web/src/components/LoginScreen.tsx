@@ -4,37 +4,32 @@ import type { Permissions } from "../types.js";
 
 export default function LoginScreen({ onLogin }: { onLogin: (url: string, permissions: Permissions) => void }) {
   const [serverUrl, setServerUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState<"url" | "key">("url");
-  const [reachable, setReachable] = useState(false);
-
-  async function handleTestUrl() {
-    setLoading(true);
-    setError("");
-    const url = serverUrl.replace(/\/+$/, "");
-    const ok = await testConnection(url);
-    setReachable(ok);
-    setLoading(false);
-    if (ok) {
-      setStep("key");
-    } else {
-      setError("Cannot reach server. Check the URL and ensure the server is running.");
-    }
-  }
 
   async function handleConnect() {
     setLoading(true);
     setError("");
     const url = serverUrl.replace(/\/+$/, "");
-    const result = await loginRequest(url, apiKey);
+
+    // Step 1: Check server is reachable
+    const ok = await testConnection(url);
+    if (!ok) {
+      setLoading(false);
+      setError("Cannot reach server. Check the URL and ensure the server is running.");
+      return;
+    }
+
+    // Step 2: Login with password
+    const result = await loginRequest(url, password);
     setLoading(false);
-    if (result.ok && result.permissions) {
-      setServerConfig(url, apiKey);
+
+    if (result.ok && result.token && result.permissions) {
+      setServerConfig(url, result.token);
       onLogin(url, result.permissions);
     } else {
-      setError(result.error || "Invalid API key.");
+      setError(result.error || "Invalid password.");
     }
   }
 
@@ -47,53 +42,36 @@ export default function LoginScreen({ onLogin }: { onLogin: (url: string, permis
           <p className="login-subtitle">Connect to your server</p>
         </div>
 
-        {step === "url" ? (
-          <>
-            <div className="login-field">
-              <label>Server URL</label>
-              <input
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                placeholder="https://xxxx.ngrok-free.app"
-                autoFocus
-                onKeyDown={(e) => { if (e.key === "Enter" && serverUrl) handleTestUrl(); }}
-              />
-            </div>
-            {error && <div className="login-error">{error}</div>}
-            <button className="primary login-btn" onClick={handleTestUrl} disabled={!serverUrl || loading}>
-              {loading ? "Testing\u2026" : "Test Connection"}
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="login-field">
-              <label>Server URL</label>
-              <div className="login-url-confirmed">{serverUrl} <span className="login-ok">Reachable</span></div>
-            </div>
-            <div className="login-field">
-              <label>API Key</label>
-              <input
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="ctm_live_..."
-                type="password"
-                autoFocus
-                onKeyDown={(e) => { if (e.key === "Enter" && apiKey) handleConnect(); }}
-              />
-            </div>
-            {error && <div className="login-error">{error}</div>}
-            <div className="login-actions">
-              <button onClick={() => { setStep("url"); setError(""); }}>Back</button>
-              <button className="primary" onClick={handleConnect} disabled={!apiKey || loading}>
-                {loading ? "Connecting\u2026" : "Connect"}
-              </button>
-            </div>
-          </>
-        )}
+        <div className="login-field">
+          <label>Server URL</label>
+          <input
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            placeholder="https://xxxx.ngrok-free.app"
+            autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter" && serverUrl && password) handleConnect(); }}
+          />
+        </div>
+
+        <div className="login-field">
+          <label>Password</label>
+          <input
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Ask the server admin"
+            type="password"
+            onKeyDown={(e) => { if (e.key === "Enter" && serverUrl && password) handleConnect(); }}
+          />
+        </div>
+
+        {error && <div className="login-error">{error}</div>}
+
+        <button className="primary login-btn" onClick={handleConnect} disabled={!serverUrl || !password || loading}>
+          {loading ? "Connecting\u2026" : "Connect"}
+        </button>
 
         <div className="login-help">
-          <p>Or paste a magic link from the server tray:</p>
-          <p className="login-help-cmd">Right-click tray icon &rarr; Copy Magic Link</p>
+          <p>Get the URL and password from the server's system tray icon.</p>
         </div>
       </div>
     </div>

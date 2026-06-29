@@ -3,7 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import Tray from "trayicon";
-import { generateApiKey, listApiKeys, revokeApiKey } from "./db.js";
+import { config } from "./config.js";
 import { startServer, getServerStatus, stopServer } from "./index.js";
 import { paths } from "./config.js";
 import { checkForUpdates, pullUpdates, applyUpdateAndRestart } from "./updater.js";
@@ -53,7 +53,6 @@ function startNgrok(): void {
 
   ngrokProcess.stdout?.on("data", (data: Buffer) => {
     const text = data.toString();
-    // Look for the tunnel URL in ngrok output
     const match = text.match(/https:\/\/[a-z0-9-]+\.ngrok(?:-free)?\.app/);
     if (match) {
       ngrokUrl = match[0];
@@ -64,13 +63,11 @@ function startNgrok(): void {
 
   ngrokProcess.stderr?.on("data", (data: Buffer) => {
     const text = data.toString().trim();
-    // Log stderr output for debugging (ngrok sends errors here)
     if (text) {
       for (const line of text.split("\n")) {
         if (line.trim()) console.log(`[ngrok:err] ${line.trim()}`);
       }
     }
-    // Also check for URL in stderr (ngrok sometimes logs there)
     const match = text.match(/https:\/\/[a-z0-9-]+\.ngrok(?:-free)?\.app/);
     if (match) {
       ngrokUrl = match[0];
@@ -115,6 +112,18 @@ export function stopNgrok(): void {
   }
 }
 
+// ─── Clipboard helper ────────────────────────────────────────────────────────
+
+function copyToClipboard(text: string): void {
+  try {
+    const ps = spawn("powershell", ["-command", "Set-Clipboard -Value $input"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
+    ps.stdin.write(text);
+    ps.stdin.end();
+  } catch {
+    // best-effort
+  }
+}
+
 // ─── Tray ────────────────────────────────────────────────────────────────────
 
 function updateTrayMenu(): void {
@@ -124,52 +133,30 @@ function updateTrayMenu(): void {
   const serverStatus = status.running ? `running on :${status.port}` : "stopped";
   const tunnelStatus = ngrokUrl ?? "not connected";
 
-  // Magic link generation
-  const FRONTEND_URL = "https://cloghan-tm.vercel.app";
-
-  function copyMagicLink(permissions: "readonly" | "readwrite") {
-    if (!ngrokUrl) {
-      tray?.notify("No Tunnel", "Tunnel is not connected yet.");
-      return;
-    }
-    const key = generateApiKey(`magic-${permissions}`, permissions);
-    const token = Buffer.from(JSON.stringify({ s: ngrokUrl, k: key })).toString("base64url");
-    const magicLink = `${FRONTEND_URL}?token=${token}`;
-    const ps = spawn("powershell", ["-command", "Set-Clipboard -Value $input"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
-    ps.stdin.write(magicLink);
-    ps.stdin.end();
-    tray?.notify("Magic Link Copied", `Open this link in a browser to log in automatically.\n\n${magicLink}`);
-  }
-
-  const copyMagicReadOnly = tray.item("Copy Magic Link (Read-Only)", {
+  // Copy tunnel URL
+  const copyUrl = tray.item("Copy Server URL", {
     disabled: !ngrokUrl,
-    action: () => copyMagicLink("readonly"),
+    action: () => {
+      if (!ngrokUrl) return;
+      copyToClipboard(ngrokUrl);
+      tray?.notify("URL Copied", ngrokUrl);
+    },
   });
 
-  const copyMagicReadWrite = tray.item("Copy Magic Link (Read/Write)", {
-    disabled: !ngrokUrl,
-    action: () => copyMagicLink("readwrite"),
+  // Show login passwords
+  const showReadwrite = tray.item(`Read-Write Password: ${config.authReadwritePassword}`, {
+    action: () => {
+      copyToClipboard(config.authReadwritePassword);
+      tray?.notify("Password Copied", "Read-write password copied to clipboard.");
+    },
   });
 
-  // View keys submenu
-  const keys = listApiKeys();
-  const viewKeysItems = keys.length
-    ? keys.map((k) => {
-        const item = tray!.item(`${k.label ?? "unnamed"} (${k.permissions}) - ${k.created_at}`);
-        const revoke = tray!.item("Revoke", {
-          action: () => {
-            revokeApiKey(k.id);
-            tray?.notify("Key Revoked", `Key "${k.label ?? "unnamed"}" has been revoked.`);
-            updateTrayMenu();
-          },
-        });
-        item.add(revoke);
-        return item;
-      })
-    : [tray.item("(no active keys)", { disabled: true })];
-
-  const viewKeys = tray.item("View Active API Keys");
-  viewKeys.add(...viewKeysItems);
+  const showReadonly = tray.item(`Read-Only Password: ${config.authReadonlyPassword}`, {
+    action: () => {
+      copyToClipboard(config.authReadonlyPassword);
+      tray?.notify("Password Copied", "Read-only password copied to clipboard.");
+    },
+  });
 
   // Pause/resume
   const pauseItem = tray.item(capturePaused ? "Resume Capture" : "Pause Capture", {
@@ -241,9 +228,10 @@ function updateTrayMenu(): void {
     tray.item(`Server: ${serverStatus}`, { disabled: true }),
     tray.item(`Tunnel: ${tunnelStatus}`, { disabled: true }),
     tray.separator(),
-    copyMagicReadWrite,
-    copyMagicReadOnly,
-    viewKeys,
+    showReadwrite,
+    showReadonly,
+    tray.separator(),
+    copyUrl,
     tray.separator(),
     pauseItem,
     viewLogs,
