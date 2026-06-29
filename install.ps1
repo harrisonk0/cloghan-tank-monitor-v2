@@ -3,7 +3,7 @@
 #   irm https://raw.githubusercontent.com/harrisonk0/cloghan-tank-monitor-v2/main/install.ps1 | iex
 #
 # Re-running this script will update an existing install to the latest version.
-# Pass -NonInteractive to skip prompts (uses existing .env, skips ngrok token).
+# Pass -NonInteractive to skip prompts (uses existing .env).
 
 param(
     [switch]$NonInteractive
@@ -11,7 +11,6 @@ param(
 
 # These placeholders are replaced by build-installer.ps1 when creating a pre-packaged installer.
 $BakedConfig = ""
-$BakedNgrokToken = ""
 
 $ErrorActionPreference = "Stop"
 $RepoUrl = "https://github.com/harrisonk0/cloghan-tank-monitor-v2.git"
@@ -68,11 +67,6 @@ if (-not (Test-Command "Git" "git")) {
         exit 1
     }
 }
-
-if (-not (Test-Command "ngrok" "ngrok")) {
-    Install-Winget "ngrok" "Ngrok.Ngrok" | Out-Null
-}
-try { ngrok update 2>&1 | Out-Null } catch {}
 
 # --- Step 2: Clone or update the repository ---
 
@@ -133,71 +127,21 @@ if (-not (Test-Path $InstallDir)) {
     }
 }
 
-# --- Step 3: Configure ngrok (first install only) ---
+# --- Step 3: Download Cloudflare Tunnel (cloudflared) ---
 
-Write-Host "[3/5] Checking ngrok..." -ForegroundColor Yellow
+Write-Host "[3/5] Setting up Cloudflare Tunnel..." -ForegroundColor Yellow
 
-$hasAuthToken = $false
-try {
-    $ngrokYml = Join-Path $env:LOCALAPPDATA "ngrok\ngrok.yml"
-    $ngrokYmlAlt = Join-Path $env:USERPROFILE ".config\ngrok\ngrok.yml"
-    $configFile = if (Test-Path $ngrokYml) { $ngrokYml } elseif (Test-Path $ngrokYmlAlt) { $ngrokYmlAlt } else { $null }
-    if ($configFile) {
-        $conf = Get-Content $configFile -Raw
-        if ($conf -match 'authtoken:\s*\S') {
-            $hasAuthToken = $true
-        }
-    }
-} catch {}
-
-if ($hasAuthToken) {
-    Write-Host "  ngrok already configured" -ForegroundColor Green
-} elseif ($BakedNgrokToken) {
-    $token = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($BakedNgrokToken))
-    $configured = $false
+$cloudflaredPath = Join-Path $InstallDir "cloudflared.exe"
+if (-not (Test-Path $cloudflaredPath)) {
+    Write-Host "  Downloading cloudflared..." -ForegroundColor Yellow
     try {
-        $result = & cmd /c "ngrok config add-authtoken $token 2>&1" 2>$null
-        if ($LASTEXITCODE -eq 0) { $configured = $true }
-    } catch {}
-    if (-not $configured) {
-        try {
-            $ngrokDir = Join-Path $env:LOCALAPPDATA "ngrok"
-            if (-not (Test-Path $ngrokDir)) { New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null }
-            Set-Content -Path (Join-Path $ngrokDir "ngrok.yml") -Value "version: " + [char]34 + "2" + [char]34 + "`nauthtoken: $token" -Encoding UTF8
-            $configured = $true
-        } catch {}
+        Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $cloudflaredPath -UseBasicParsing
+        Write-Host "  cloudflared downloaded" -ForegroundColor Green
+    } catch {
+        Write-Host "  WARNING: Could not download cloudflared. It will be auto-downloaded on first start." -ForegroundColor Yellow
     }
-    if ($configured) {
-        Write-Host "  ngrok configured (pre-packaged)" -ForegroundColor Green
-    } else {
-        Write-Host "  WARNING: Could not configure ngrok." -ForegroundColor Yellow
-    }
-} elseif ($NonInteractive) {
-    Write-Host "  Skipping (non-interactive)" -ForegroundColor Yellow
 } else {
-    $token = Read-Host "  Enter your ngrok auth token (from https://dashboard.ngrok.com/get-started/your-authtoken)"
-    if (-not [string]::IsNullOrWhiteSpace($token)) {
-        $configured = $false
-        try {
-            $result = & cmd /c "ngrok config add-authtoken $token 2>&1" 2>$null
-            if ($LASTEXITCODE -eq 0) { $configured = $true }
-        } catch {}
-        if (-not $configured) {
-            try {
-                $ngrokDir = Join-Path $env:LOCALAPPDATA "ngrok"
-                if (-not (Test-Path $ngrokDir)) { New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null }
-                Set-Content -Path (Join-Path $ngrokDir "ngrok.yml") -Value "version: " + [char]34 + "2" + [char]34 + "`nauthtoken: $token" -Encoding UTF8
-                $configured = $true
-            } catch {}
-        }
-        if ($configured) {
-            Write-Host "  ngrok configured" -ForegroundColor Green
-        } else {
-            Write-Host "  WARNING: Could not configure ngrok." -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host "  No token provided. Tunnel will not work until configured." -ForegroundColor Yellow
-    }
+    Write-Host "  cloudflared already present" -ForegroundColor Green
 }
 
 # --- Step 4: Install npm dependencies ---

@@ -42,21 +42,6 @@ $script = Get-Content $InstallScript -Raw
 # Replace the empty $BakedConfig placeholder with the actual base64 value
 $script = $script -replace '\$BakedConfig = ""', "`$BakedConfig = `"$base64`""
 
-# Read ngrok auth token and inject if found
-$ngrokYml = Join-Path $env:LOCALAPPDATA "ngrok\ngrok.yml"
-$ngrokYmlAlt = Join-Path $env:USERPROFILE ".config\ngrok\ngrok.yml"
-$configFile = if (Test-Path $ngrokYml) { $ngrokYml } elseif (Test-Path $ngrokYmlAlt) { $ngrokYmlAlt } else { $null }
-if ($configFile) {
-    $ngrokConf = Get-Content $configFile -Raw
-    if ($ngrokConf -match 'authtoken:\s*(\S+)') {
-        $ngrokToken = $Matches[1]
-        $ngrokBytes = [System.Text.Encoding]::UTF8.GetBytes($ngrokToken)
-        $ngrokBase64 = [System.Convert]::ToBase64String($ngrokBytes)
-        $script = $script -replace '\$BakedNgrokToken = ""', "`$BakedNgrokToken = `"$ngrokBase64`""
-        Write-Host "  ngrok auth token found and baked in" -ForegroundColor Green
-    }
-}
-
 # Create output directory
 if (Test-Path $OutputDir) { Remove-Item -Recurse -Force $OutputDir }
 New-Item -ItemType Directory -Path $OutputDir | Out-Null

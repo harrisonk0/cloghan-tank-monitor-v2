@@ -2,6 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { Readable } from "node:stream";
 import Tray from "trayicon";
 import { config } from "./config.js";
 import { startServer, getServerStatus, stopServer } from "./index.js";
@@ -11,104 +12,114 @@ import { checkForUpdates, pullUpdates, applyUpdateAndRestart } from "./updater.j
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let tray: Awaited<ReturnType<typeof Tray.create>> | null = null;
-let ngrokProcess: ChildProcess | null = null;
-let ngrokUrl: string | null = null;
+let cloudflaredProcess: ChildProcess | null = null;
+let tunnelUrl: string | null = null;
 let capturePaused = false;
 
 const ICON_PATH = path.resolve(import.meta.dirname ?? ".", "tray-icon.png");
+const CLOUDFLARED_EXE = path.resolve(import.meta.dirname ?? ".", "..", "..", "..", "cloudflared.exe");
+const CLOUDFLARED_DOWNLOAD_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe";
 
-// ─── Ngrok ───────────────────────────────────────────────────────────────────
+// ─── Cloudflared binary management ───────────────────────────────────────────
 
-function startNgrok(): void {
-  // Check ngrok version first
+async function ensureCloudflared(): Promise<boolean> {
+  if (fs.existsSync(CLOUDFLARED_EXE)) return true;
+  console.log("[cloudflared] Binary not found, downloading...");
   try {
-    const versionCheck = spawnSync("ngrok", ["--version"], { encoding: "utf-8", windowsHide: true });
-    if (versionCheck.stdout) {
-      const versionLine = versionCheck.stdout.trim().split("\n")[0];
-      console.log("[ngrok] " + versionLine);
+    const response = await fetch(CLOUDFLARED_DOWNLOAD_URL);
+    if (!response.ok || !response.body) {
+      console.warn(`[cloudflared] Download failed: HTTP ${response.status}`);
+      return false;
     }
-  } catch {
-    // Ignore version check errors
+    const fileStream = fs.createWriteStream(CLOUDFLARED_EXE);
+    const stream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+    await new Promise<void>((resolve, reject) => {
+      stream.pipe(fileStream);
+      stream.on("error", reject);
+      fileStream.on("finish", () => resolve());
+      fileStream.on("error", reject);
+    });
+    console.log("[cloudflared] Downloaded successfully");
+    return true;
+  } catch (error) {
+    console.warn("[cloudflared] Download error:", error instanceof Error ? error.message : error);
+    // Clean up partial file if exists
+    try { fs.unlinkSync(CLOUDFLARED_EXE); } catch { /* ignore */ }
+    return false;
+  }
+}
+
+// ─── Cloudflared tunnel ──────────────────────────────────────────────────────
+
+async function startCloudflared(): Promise<void> {
+  const ok = await ensureCloudflared();
+  if (!ok) {
+    console.warn("[cloudflared] Cannot start without binary — tray will show 'not connected'");
+    updateTrayMenu();
+    return;
   }
 
   try {
-    ngrokProcess = spawn("ngrok", ["http", "3000", "--inspect=false"], {
+    cloudflaredProcess = spawn(CLOUDFLARED_EXE, ["tunnel", "--url", "http://localhost:3000"], {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       env: process.env,
     });
   } catch (error) {
-    console.warn("[ngrok] Failed to start:", error instanceof Error ? error.message : error);
-    ngrokUrl = null;
+    console.warn("[cloudflared] Failed to start:", error instanceof Error ? error.message : error);
+    tunnelUrl = null;
     updateTrayMenu();
     return;
   }
 
-  ngrokProcess.on("error", (error) => {
-    console.warn("[ngrok] Process error:", error.message);
-    ngrokUrl = null;
-    ngrokProcess = null;
+  cloudflaredProcess.on("error", (error) => {
+    console.warn("[cloudflared] Process error:", error.message);
+    tunnelUrl = null;
+    cloudflaredProcess = null;
     updateTrayMenu();
   });
 
-  ngrokProcess.stdout?.on("data", (data: Buffer) => {
+  // cloudflared prints the tunnel URL to stderr
+  cloudflaredProcess.stderr?.on("data", (data: Buffer) => {
     const text = data.toString();
-    const match = text.match(/https:\/\/[a-z0-9-]+\.ngrok(?:-free)?\.app/);
+    for (const line of text.split("\n")) {
+      if (line.trim()) console.log(`[cloudflared] ${line.trim()}`);
+    }
+    const match = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
     if (match) {
-      ngrokUrl = match[0];
+      tunnelUrl = match[0];
       updateTrayMenu();
-      console.log(`[ngrok] Tunnel: ${ngrokUrl}`);
+      console.log(`[cloudflared] Tunnel: ${tunnelUrl}`);
     }
   });
 
-  ngrokProcess.stderr?.on("data", (data: Buffer) => {
-    const text = data.toString().trim();
-    if (text) {
-      for (const line of text.split("\n")) {
-        if (line.trim()) console.log(`[ngrok:err] ${line.trim()}`);
-      }
+  // Also check stdout
+  cloudflaredProcess.stdout?.on("data", (data: Buffer) => {
+    const text = data.toString();
+    for (const line of text.split("\n")) {
+      if (line.trim()) console.log(`[cloudflared] ${line.trim()}`);
     }
-    const match = text.match(/https:\/\/[a-z0-9-]+\.ngrok(?:-free)?\.app/);
+    const match = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
     if (match) {
-      ngrokUrl = match[0];
+      tunnelUrl = match[0];
       updateTrayMenu();
-      console.log(`[ngrok] Tunnel: ${ngrokUrl}`);
+      console.log(`[cloudflared] Tunnel: ${tunnelUrl}`);
     }
   });
 
-  ngrokProcess.on("exit", (code) => {
-    console.log(`[ngrok] Exited with code ${code}`);
-    ngrokUrl = null;
-    ngrokProcess = null;
+  cloudflaredProcess.on("exit", (code) => {
+    console.log(`[cloudflared] Exited with code ${code}`);
+    tunnelUrl = null;
+    cloudflaredProcess = null;
     updateTrayMenu();
   });
-
-  // Also poll the local API as a fallback
-  const pollInterval = setInterval(async () => {
-    if (!ngrokProcess) {
-      clearInterval(pollInterval);
-      return;
-    }
-    try {
-      const res = await fetch("http://127.0.0.1:4040/api/tunnels");
-      const data = (await res.json()) as { tunnels?: { public_url?: string }[] };
-      const url = data.tunnels?.[0]?.public_url;
-      if (url && url !== ngrokUrl) {
-        ngrokUrl = url;
-        updateTrayMenu();
-        console.log(`[ngrok] Tunnel (via API): ${ngrokUrl}`);
-      }
-    } catch {
-      // ngrok API not ready yet
-    }
-  }, 2000);
 }
 
-export function stopNgrok(): void {
-  if (ngrokProcess) {
-    ngrokProcess.kill();
-    ngrokProcess = null;
-    ngrokUrl = null;
+export function stopCloudflared(): void {
+  if (cloudflaredProcess) {
+    cloudflaredProcess.kill();
+    cloudflaredProcess = null;
+    tunnelUrl = null;
   }
 }
 
@@ -131,15 +142,15 @@ function updateTrayMenu(): void {
 
   const status = getServerStatus();
   const serverStatus = status.running ? `running on :${status.port}` : "stopped";
-  const tunnelStatus = ngrokUrl ?? "not connected";
+  const tunnelStatus = tunnelUrl ?? "not connected";
 
   // Copy tunnel URL
   const copyUrl = tray.item("Copy Server URL", {
-    disabled: !ngrokUrl,
+    disabled: !tunnelUrl,
     action: () => {
-      if (!ngrokUrl) return;
-      copyToClipboard(ngrokUrl);
-      tray?.notify("URL Copied", ngrokUrl);
+      if (!tunnelUrl) return;
+      copyToClipboard(tunnelUrl);
+      tray?.notify("URL Copied", tunnelUrl);
     },
   });
 
@@ -207,7 +218,7 @@ function updateTrayMenu(): void {
       }
       tray?.notify("Restarting", "Updates applied. Restarting...");
       applyUpdateAndRestart(async () => {
-        stopNgrok();
+        stopCloudflared();
         await stopServer();
       });
     },
@@ -216,7 +227,7 @@ function updateTrayMenu(): void {
   // Quit
   const quit = tray.item("Quit", {
     action: () => {
-      stopNgrok();
+      stopCloudflared();
       stopServer();
       tray?.kill();
       process.exit(0);
@@ -282,8 +293,8 @@ export async function initTray(): Promise<void> {
 
   updateTrayMenu();
 
-  // Start ngrok
-  startNgrok();
+  // Start cloudflared (async — won't block tray UI)
+  void startCloudflared();
 
   tray?.notify("Cloghan Tank Monitor", "Server started");
   console.log("[tray] System tray initialized");
@@ -293,6 +304,6 @@ export function isCapturePaused(): boolean {
   return capturePaused;
 }
 
-export function getNgrokUrl(): string | null {
-  return ngrokUrl;
+export function getTunnelUrl(): string | null {
+  return tunnelUrl;
 }

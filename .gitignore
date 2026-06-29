@@ -52,3 +52,5 @@ package/
 .vercel
 package.zip
 runtime/screenshots/.gitkeep
+.env*
+cloudflared.exe

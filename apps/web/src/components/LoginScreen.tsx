@@ -47,7 +47,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (url: string, permis
           <input
             value={serverUrl}
             onChange={(e) => setServerUrl(e.target.value)}
-            placeholder="https://xxxx.ngrok-free.app"
+            placeholder="https://xxxx.trycloudflare.com"
             autoFocus
             onKeyDown={(e) => { if (e.key === "Enter" && serverUrl && password) handleConnect(); }}
           />

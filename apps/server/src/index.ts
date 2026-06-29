@@ -26,7 +26,8 @@ await app.register(cors, {
     if (!origin) return cb(null, true);
     try {
       const hostname = new URL(origin).hostname;
-      if (/\.ngrok(-free)?\.(dev|app)$/.test(hostname)) return cb(null, true);
+      if (/\.trycloudflare\.com$/.test(hostname)) return cb(null, true);
+      if (/\.ngrok(-free)?\.(dev|app)$/.test(hostname)) return cb(null, true); // backwards compat
       if (/\.vercel\.app$/.test(hostname)) return cb(null, true);
       if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true);
     } catch {
@@ -35,7 +36,7 @@ await app.register(cors, {
     cb(null, false);
   },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"],
+  allowedHeaders: ["Content-Type", "Authorization"],
 });
 
 // Allow empty/missing Content-Type on POST (e.g. /api/refresh with no body)

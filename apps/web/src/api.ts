@@ -22,7 +22,6 @@ export async function testConnection(url: string, signal?: AbortSignal): Promise
   try {
     const res = await fetch(`${url.replace(/\/+$/, "")}/api/health`, {
       method: "GET",
-      headers: { "ngrok-skip-browser-warning": "true" },
       signal,
     });
     return res.ok;
@@ -35,7 +34,7 @@ export async function loginRequest(url: string, password: string): Promise<{ ok:
   try {
     const res = await fetch(`${url.replace(/\/+$/, "")}/api/auth`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
     });
     const data = await res.json();
@@ -49,7 +48,7 @@ export async function loginRequest(url: string, password: string): Promise<{ ok:
 export async function checkSession(url: string, token: string): Promise<{ authenticated: boolean; permissions?: Permissions }> {
   try {
     const res = await fetch(`${url}/api/auth`, {
-      headers: { "Authorization": `Bearer ${token}`, "ngrok-skip-browser-warning": "true" },
+      headers: { "Authorization": `Bearer ${token}` },
     });
     return await res.json();
   } catch {
@@ -61,7 +60,7 @@ export async function logoutRequest(url: string, token: string) {
   try {
     await fetch(`${url}/api/auth`, {
       method: "DELETE",
-      headers: { "Authorization": `Bearer ${token}`, "ngrok-skip-browser-warning": "true" },
+      headers: { "Authorization": `Bearer ${token}` },
     });
   } catch { /* ignore */ }
   clearServerConfig();
@@ -76,7 +75,6 @@ export async function apiRequest(path: string, init: RequestInit) {
   const token = getSessionToken();
   const hasBody = init.body !== undefined && init.body !== null;
   const headers: Record<string, string> = {
-    "ngrok-skip-browser-warning": "true",
     ...(hasBody ? { "Content-Type": "application/json" } : {}),
     ...(token ? { "Authorization": `Bearer ${token}` } : {}),
   };
