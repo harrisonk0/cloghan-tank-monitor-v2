@@ -331,8 +331,8 @@ Write-Host "  Connect to the Web Dashboard" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  1. Start the app (desktop shortcut)" -ForegroundColor White
-Write-Host "  2. Right-click tray icon > Copy Magic Link (Read/Write)" -ForegroundColor White
-Write-Host "  3. Paste the link into https://cloghan-tm.vercel.app" -ForegroundColor White
+Write-Host "  2. Right-click tray icon for the URL and password" -ForegroundColor White
+Write-Host "  3. Go to https://cloghan.vercel.app" -ForegroundColor White
 Write-Host ""
 Write-Host "  That is it - you are logged in." -ForegroundColor Gray
 Write-Host ""
