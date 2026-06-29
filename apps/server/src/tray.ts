@@ -4,7 +4,7 @@ import net from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
 import Tray from "trayicon";
-import { config } from "./config.js";
+import { config, rotatePasswords } from "./config.js";
 import { startServer, getServerStatus, stopServer } from "./index.js";
 import { paths } from "./config.js";
 import { checkForUpdates, pullUpdates, applyUpdateAndRestart } from "./updater.js";
@@ -169,6 +169,14 @@ function updateTrayMenu(): void {
     },
   });
 
+  const rotatePw = tray.item("Rotate Passwords", {
+    action: () => {
+      const newPw = rotatePasswords();
+      tray?.notify("Passwords Rotated", `Read-Write: ${newPw.readwrite}\nRead-Only: ${newPw.readonly}\n\nNew passwords are saved to .env.`);
+      updateTrayMenu();
+    },
+  });
+
   // Pause/resume
   const pauseItem = tray.item(capturePaused ? "Resume Capture" : "Pause Capture", {
     action: () => {
@@ -241,6 +249,7 @@ function updateTrayMenu(): void {
     tray.separator(),
     showReadwrite,
     showReadonly,
+    rotatePw,
     tray.separator(),
     copyUrl,
     tray.separator(),

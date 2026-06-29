@@ -54,6 +54,49 @@ export const config = {
   authReadwritePassword: ensurePassword("AUTH_READWRITE_PASSWORD"),
 };
 
+export function rotatePasswords(): { readwrite: string; readonly: string } {
+  const newReadwrite = generatePassword();
+  const newReadonly = generatePassword();
+
+  // Update in-memory config
+  config.authReadwritePassword = newReadwrite;
+  config.authReadonlyPassword = newReadonly;
+
+  // Update process.env
+  process.env.AUTH_READWRITE_PASSWORD = newReadwrite;
+  process.env.AUTH_READONLY_PASSWORD = newReadonly;
+
+  // Update .env file
+  try {
+    const envPath = path.resolve(process.cwd(), ".env");
+    let content = "";
+    try { content = fs.readFileSync(envPath, "utf-8"); } catch { /* file doesn't exist yet */ }
+
+    const lines = content.split("\n");
+    const rwIdx = lines.findIndex((l) => l.startsWith("AUTH_READWRITE_PASSWORD="));
+    const roIdx = lines.findIndex((l) => l.startsWith("AUTH_READONLY_PASSWORD="));
+
+    if (rwIdx >= 0) {
+      lines[rwIdx] = `AUTH_READWRITE_PASSWORD=${newReadwrite}`;
+    } else {
+      lines.push(`AUTH_READWRITE_PASSWORD=${newReadwrite}`);
+    }
+
+    if (roIdx >= 0) {
+      lines[roIdx] = `AUTH_READONLY_PASSWORD=${newReadonly}`;
+    } else {
+      lines.push(`AUTH_READONLY_PASSWORD=${newReadonly}`);
+    }
+
+    fs.writeFileSync(envPath, lines.join("\n"));
+    console.log("[config] Passwords rotated and written to .env");
+  } catch (error) {
+    console.warn("[config] Could not update .env:", error instanceof Error ? error.message : error);
+  }
+
+  return { readwrite: newReadwrite, readonly: newReadonly };
+}
+
 export const paths = {
   dataDir: path.join(config.runtimeDir, "data"),
   screenshotDir: path.join(config.runtimeDir, "screenshots"),
